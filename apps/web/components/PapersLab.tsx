@@ -5,6 +5,7 @@ import { Api, type Paper, type PaperCardData } from "@/lib/api";
 import FileDropzone from "@/components/FileDropzone";
 import PaperCard from "@/components/PaperCard";
 import ChatPanel from "@/components/ChatPanel";
+import ExperimentCanvas from "@/components/ExperimentCanvas";
 
 export default function PapersLab({ projectId }: { projectId: string }) {
   const [papers, setPapers] = useState<Paper[]>([]);
@@ -100,6 +101,7 @@ function PaperDetail({
   onUpdate: (p: Paper) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<"study" | "experiment">("study");
 
   async function generate() {
     setBusy(true);
@@ -129,16 +131,40 @@ function PaperDetail({
           </button>
         </div>
       ) : (
-        <div className="mt-6 grid gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <PaperCard paperId={paper.id} card={paper.card} />
+        <>
+          <div className="mt-4 flex gap-2 border-b border-line">
+            {(["study", "experiment"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium capitalize transition ${
+                  mode === m
+                    ? "border-leaf text-forest"
+                    : "border-transparent text-muted hover:text-forest"
+                }`}
+              >
+                {m === "study" ? "Study" : "Experiment"}
+              </button>
+            ))}
           </div>
-          <div className="lg:col-span-1">
-            <div className="sticky top-4 h-[70vh]">
-              <ChatPanel paperId={paper.id} />
+
+          {mode === "study" ? (
+            <div className="mt-6 grid gap-6 lg:grid-cols-3">
+              <div className="lg:col-span-2">
+                <PaperCard paperId={paper.id} card={paper.card} />
+              </div>
+              <div className="lg:col-span-1">
+                <div className="sticky top-4 h-[70vh]">
+                  <ChatPanel paperId={paper.id} />
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          ) : (
+            <div className="mt-6">
+              <ExperimentCanvas paperId={paper.id} />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
