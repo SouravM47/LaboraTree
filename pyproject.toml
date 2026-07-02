@@ -1,0 +1,19 @@
+# uv workspace root (virtual — no package of its own).
+# Members are the Python projects in the monorepo.
+
+[tool.uv.workspace]
+members = ["apps/api", "packages/plugin-sdk"]
+
+[tool.uv.sources]
+laboratree-plugin-sdk = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["apps/api/tests"]
