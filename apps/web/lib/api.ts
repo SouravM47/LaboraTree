@@ -223,6 +223,23 @@ export type SampleResult = {
 };
 export type PilotResult = { persona: string; n: number; respondents: Record<string, string>[] };
 
+export type ComponentSpecLite = {
+  id: string;
+  name: string;
+  kind: string;
+  summary: string;
+  tags: string[];
+};
+export type PipelineStepResult = {
+  component_id: string;
+  run_id?: string;
+  status: string;
+  evidence_count?: number;
+  preview?: Record<string, unknown>;
+  error?: string;
+};
+export type PipelineResult = { steps: PipelineStepResult[]; n_rows_final: number; ok: boolean };
+
 // ---------------- endpoint helpers ----------------
 export const Api = {
   register: (email: string, password: string, full_name: string) =>
@@ -301,6 +318,16 @@ export const Api = {
   ) => apiPost<SampleResult>(`/api/projects/${projectId}/collection/sample-size`, body),
   pilot: (projectId: string, body: { questions: string[]; persona: string; n: number }) =>
     apiPost<PilotResult>(`/api/projects/${projectId}/collection/pilot`, body),
+
+  listComponents: () =>
+    apiGet<{ count: number; components: ComponentSpecLite[] }>("/api/components"),
+  runPipeline: (
+    projectId: string,
+    body: {
+      steps: { component_id: string; params: Record<string, unknown> }[];
+      dataset?: Record<string, unknown>[] | null;
+    },
+  ) => apiPost<PipelineResult>(`/api/projects/${projectId}/pipeline/run`, body),
 
   runComponent: (
     projectId: string,

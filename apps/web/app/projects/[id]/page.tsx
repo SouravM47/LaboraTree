@@ -12,6 +12,7 @@ import IdeationLab from "@/components/IdeationLab";
 import TrendLab from "@/components/TrendLab";
 import DecisionLab from "@/components/DecisionLab";
 import CollectionLab from "@/components/CollectionLab";
+import PipelineLab from "@/components/PipelineLab";
 
 const TABS = [
   { key: "ideation", label: "Ideation Lab" },
@@ -21,6 +22,7 @@ const TABS = [
   { key: "trend", label: "Trend Lab" },
   { key: "decision", label: "Decision Lab" },
   { key: "papers", label: "Paper Lab" },
+  { key: "pipeline", label: "Pipeline" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
@@ -105,6 +107,7 @@ export default function ProjectWorkspace() {
         {tab === "trend" && <TrendLab projectId={projectId} />}
         {tab === "decision" && <DecisionLab projectId={projectId} />}
         {tab === "papers" && <PapersLab projectId={projectId} />}
+        {tab === "pipeline" && <PipelineLab projectId={projectId} />}
       </div>
     </div>
   );
