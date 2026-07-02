@@ -23,8 +23,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           </Link>
           {user ? (
-            <div className="flex items-center gap-3 text-sm">
-              <span className="text-muted">{user.email}</span>
+            <div className="flex items-center gap-4 text-sm">
+              <Link href="/" className="font-medium text-forest hover:text-leaf">
+                Projects
+              </Link>
+              <Link href="/team" className="font-medium text-forest hover:text-leaf">
+                Team
+              </Link>
+              <span className="hidden text-muted md:inline">{user.email}</span>
               <span className="rounded-full bg-sprout/30 px-2 py-0.5 text-xs text-forest">
                 {user.role}
               </span>
