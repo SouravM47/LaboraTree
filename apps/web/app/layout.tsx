@@ -14,8 +14,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${lora.variable}`}>
-      <body className="min-h-screen bg-bg font-sans text-ink antialiased">
+    <html lang="en" className={`${inter.variable} ${lora.variable}`} suppressHydrationWarning>
+      <body className="min-h-screen bg-bg font-sans text-ink antialiased" suppressHydrationWarning>
         <AuthProvider>
           <AppShell>{children}</AppShell>
         </AuthProvider>

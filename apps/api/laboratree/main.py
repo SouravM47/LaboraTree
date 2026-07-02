@@ -12,6 +12,7 @@ from .api import (
     artifacts,
     auth,
     components,
+    experiments,
     gates,
     health,
     orgs,
@@ -65,6 +66,7 @@ app.include_router(artifacts.router)
 app.include_router(gates.router)
 app.include_router(signal.router)
 app.include_router(papers.router)
+app.include_router(experiments.router)
 app.include_router(components.router)
 
 
