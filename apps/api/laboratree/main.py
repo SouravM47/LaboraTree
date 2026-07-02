@@ -11,13 +11,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api import (
     artifacts,
     auth,
+    collection,
     components,
     experiments,
     gates,
     health,
+    ideation,
     orgs,
     papers,
+    pipeline,
     projects,
+    reports,
     runs,
     signal,
 )
@@ -67,6 +71,10 @@ app.include_router(gates.router)
 app.include_router(signal.router)
 app.include_router(papers.router)
 app.include_router(experiments.router)
+app.include_router(ideation.router)
+app.include_router(reports.router)
+app.include_router(collection.router)
+app.include_router(pipeline.router)
 app.include_router(components.router)
 
 

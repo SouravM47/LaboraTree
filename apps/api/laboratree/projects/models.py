@@ -36,6 +36,11 @@ class GateStatus(str, enum.Enum):
     EDITED = "edited"
 
 
+class IdeationStatus(str, enum.Enum):
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
 class Project(PkMixin, OrgScopedMixin, TimestampMixin, Base):
     __tablename__ = "projects"
 
@@ -157,3 +162,19 @@ class GateTask(PkMixin, OrgScopedMixin, TimestampMixin, Base):
     )
 
     run: Mapped[Run] = relationship(back_populates="gates")
+
+
+class IdeationSession(PkMixin, OrgScopedMixin, TimestampMixin, Base):
+    """A Co-Scientist run: goal -> ranked hypotheses + meta-review."""
+
+    __tablename__ = "ideation_sessions"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    goal: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[IdeationStatus] = mapped_column(
+        _enum_col(IdeationStatus, "ideation_status"), default=IdeationStatus.COMPLETE, nullable=False
+    )
+    hypotheses: Mapped[list] = mapped_column(JSONB, default=list)  # ranked list of hypothesis dicts
+    meta_review: Mapped[str] = mapped_column(Text, default="")

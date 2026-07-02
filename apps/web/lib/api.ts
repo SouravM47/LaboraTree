@@ -87,6 +87,13 @@ export async function downloadBlob(path: string, filename: string): Promise<void
   URL.revokeObjectURL(url);
 }
 
+export async function openBlob(path: string): Promise<void> {
+  const res = await fetch(`${API_URL}${path}`, { headers: authHeaders() });
+  if (!res.ok) throw new ApiError(res.status, "open failed");
+  const blob = await res.blob();
+  window.open(URL.createObjectURL(blob), "_blank");
+}
+
 // ---------------- typed shapes ----------------
 export type TokenOut = { access_token: string; org_id: string };
 export type Me = { id: string; email: string; full_name: string; active_org_id: string; role: string };
@@ -175,6 +182,64 @@ export type NodeRunResult = {
   paper_reported: string;
 };
 
+export type Hypothesis = {
+  id: string;
+  text: string;
+  elo: number;
+  rank: number;
+  critique?: string;
+  origin?: string;
+};
+export type IdeationSession = {
+  id: string;
+  goal: string;
+  status: string;
+  hypotheses: Hypothesis[];
+  meta_review: string;
+  created_at: string;
+};
+
+export type Trust = {
+  score: number;
+  reproducibility: number;
+  evidence_coverage: number;
+  leakage_flags: number;
+  n_runs: number;
+};
+export type ReportResult = {
+  run_id: string;
+  artifact_id: string;
+  download_url: string;
+  trust: Trust;
+  project: string;
+};
+
+export type SurveyQuestion = { id: string; text: string; type: string; options?: string[] };
+export type BiasFinding = { question: string; issue: string; severity: string; suggestion: string };
+export type SampleResult = {
+  sample_size: number;
+  unadjusted: number;
+  params: Record<string, unknown>;
+};
+export type PilotResult = { persona: string; n: number; respondents: Record<string, string>[] };
+
+export type ComponentSpecLite = {
+  id: string;
+  name: string;
+  kind: string;
+  summary: string;
+  tags: string[];
+};
+export type PipelineStepResult = {
+  component_id: string;
+  run_id?: string;
+  status: string;
+  evidence_count?: number;
+  preview?: Record<string, unknown>;
+  error?: string;
+};
+export type PipelineResult = { steps: PipelineStepResult[]; n_rows_final: number; ok: boolean };
+
 // ---------------- endpoint helpers ----------------
 export const Api = {
   register: (email: string, password: string, full_name: string) =>
@@ -232,6 +297,37 @@ export const Api = {
     nodeId: string,
     body: { dataset_id: string; component_id?: string; params?: Record<string, unknown> },
   ) => apiPost<NodeRunResult>(`/api/experiments/${expId}/nodes/${nodeId}/run`, body),
+
+  runIdeation: (projectId: string, body: { goal: string; n?: number; evolve_n?: number }) =>
+    apiPost<IdeationSession>(`/api/projects/${projectId}/ideation`, body),
+  listIdeation: (projectId: string) =>
+    apiGet<IdeationSession[]>(`/api/projects/${projectId}/ideation`),
+
+  generateReport: (projectId: string) =>
+    apiPost<ReportResult>(`/api/projects/${projectId}/report`),
+
+  designQuestionnaire: (projectId: string, body: { goal: string; audience: string; n: number }) =>
+    apiPost<{ questions: SurveyQuestion[] }>(
+      `/api/projects/${projectId}/collection/questionnaire`, body),
+  biasCheck: (projectId: string, questions: string[]) =>
+    apiPost<{ findings: BiasFinding[] }>(
+      `/api/projects/${projectId}/collection/bias-check`, { questions }),
+  sampleSize: (
+    projectId: string,
+    body: { confidence: number; margin: number; population?: number | null; proportion: number },
+  ) => apiPost<SampleResult>(`/api/projects/${projectId}/collection/sample-size`, body),
+  pilot: (projectId: string, body: { questions: string[]; persona: string; n: number }) =>
+    apiPost<PilotResult>(`/api/projects/${projectId}/collection/pilot`, body),
+
+  listComponents: () =>
+    apiGet<{ count: number; components: ComponentSpecLite[] }>("/api/components"),
+  runPipeline: (
+    projectId: string,
+    body: {
+      steps: { component_id: string; params: Record<string, unknown> }[];
+      dataset?: Record<string, unknown>[] | null;
+    },
+  ) => apiPost<PipelineResult>(`/api/projects/${projectId}/pipeline/run`, body),
 
   runComponent: (
     projectId: string,
