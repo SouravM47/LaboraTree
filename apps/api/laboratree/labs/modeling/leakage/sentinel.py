@@ -41,12 +41,10 @@ def audit_leakage(
 
     for col in features:
         s = df[col]
-        # exact duplicate of the target
         if s.equals(y):
             findings.append(_f("target_leakage", "high", col,
                                f"'{col}' is identical to target '{target}'"))
             continue
-        # near-perfect numeric correlation
         if pd.api.types.is_numeric_dtype(s) and pd.api.types.is_numeric_dtype(y):
             if s.nunique() > 1 and y.nunique() > 1:
                 corr = float(np.corrcoef(s.fillna(s.mean()), y.fillna(y.mean()))[0, 1])
@@ -54,7 +52,6 @@ def audit_leakage(
                     findings.append(_f("target_leakage", "high", col,
                                        f"|corr('{col}', '{target}')| = {abs(corr):.4f}"))
                     continue
-        # functional dependency: feature perfectly determines target and isn't a row id
         distinct = s.nunique(dropna=False)
         if 1 < distinct < n:
             purity = df.groupby(col, observed=True)[target].nunique(dropna=False)
@@ -63,7 +60,7 @@ def audit_leakage(
                                    f"'{col}' functionally determines '{target}' (100% purity)"))
 
     if split_column and split_column in df.columns:
-        findings.extend(_contamination(df, split_column, target))
+        findings.extend(_contamination(df, split_column))
         if time_column and time_column in df.columns:
             findings.extend(_temporal(df, split_column, time_column))
 
@@ -74,7 +71,7 @@ def _f(check: str, severity: str, column: str | None, detail: str) -> Finding:
     return {"check": check, "severity": severity, "column": column, "detail": detail}
 
 
-def _contamination(df: Any, split_column: str, target: str) -> list[Finding]:
+def _contamination(df: Any, split_column: str) -> list[Finding]:
     cols = [c for c in df.columns if c != split_column]
     groups = {str(k): g[cols] for k, g in df.groupby(split_column, observed=True)}
     if len(groups) < 2:
@@ -83,8 +80,7 @@ def _contamination(df: Any, split_column: str, target: str) -> list[Finding]:
     findings: list[Finding] = []
     for i in range(len(names)):
         for j in range(i + 1, len(names)):
-            a, b = groups[names[i]], groups[names[j]]
-            merged = a.merge(b, how="inner")
+            merged = groups[names[i]].merge(groups[names[j]], how="inner")
             if len(merged) > 0:
                 findings.append(_f("train_test_contamination", "high", None,
                                    f"{len(merged)} identical rows shared by "
@@ -95,8 +91,7 @@ def _contamination(df: Any, split_column: str, target: str) -> list[Finding]:
 def _temporal(df: Any, split_column: str, time_column: str) -> list[Finding]:
     import pandas as pd
 
-    t = pd.to_datetime(df[time_column], errors="coerce")
-    frame = df.assign(_t=t)
+    frame = df.assign(_t=pd.to_datetime(df[time_column], errors="coerce"))
     by = {str(k): g["_t"] for k, g in frame.groupby(split_column, observed=True)}
     if not {"train", "test"}.issubset({k.lower() for k in by}):
         return []
