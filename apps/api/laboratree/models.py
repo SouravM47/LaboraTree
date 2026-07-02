@@ -11,6 +11,7 @@ from .projects.models import (  # noqa: F401
     Run,
     RunStatus,
 )
+from .papers.models import Paper, PaperChunk, PaperStatus  # noqa: F401
 from .tenancy.models import Membership, Organization, Role, User  # noqa: F401
 
 __all__ = [
@@ -27,4 +28,7 @@ __all__ = [
     "Evidence",
     "GateTask",
     "GateStatus",
+    "Paper",
+    "PaperChunk",
+    "PaperStatus",
 ]
