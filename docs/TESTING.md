@@ -3,11 +3,30 @@
 How to exercise every Lab **properly**, with ready-made sample files, exact steps, expected
 results, and the **intention** (what each thing proves).
 
-Sample files live in `docs/samples/`:
-- `customers.csv` — has a **duplicate row** and a **missing value** (for Signal / Insight / Decision)
-- `sales_timeseries.csv` — 24 months with trend + seasonality (for Trend)
-- `leaky.csv` — a feature (`leak`) that **equals** the target `converted` (for Leakage / Red-Team)
-- `sample_paper.docx` — generate with `uv run python ../../docs/samples/make_sample_paper.py` (Paper Lab)
+Sample files live in `docs/samples/`. Small hand-made CSVs:
+- `customers.csv` — has a **duplicate row** and a **missing value** (Signal / Insight / Decision)
+- `sales_timeseries.csv` — 24 months, trend + seasonality (Trend)
+- `leaky.csv` — a feature (`leak`) that **equals** the target `converted` (Leakage / Red-Team → FAIL)
+
+Richer, realistic files — generate them once (the PDF/xlsx/docx are binary):
+```powershell
+cd apps/api; uv run --with fpdf2 python ../../docs/samples/make_sample_files.py
+```
+| File | For | Notes |
+|---|---|---|
+| `churn_clean.csv` | Model / Red-Team / Pipeline / Insight | classification, **no leakage** → red-team **PASS** (acc ≈ 0.7) |
+| `housing.csv` | `model.ml.linear_regression` | regression, target `price` → **r² ≈ 0.92** |
+| `campaign_timeseries.csv` | Trend `analyzer.causal_impact` | intervention at **index 10** → effect ≈ **+34 (14%)** |
+| `survey_responses.csv` | Insight / Decision | `satisfaction`, `would_recommend`, `age_group` (subgroup) |
+| `messy_finance.xlsx` | Signal | 2 sheets (revenue, costs) → consolidates to a master workbook |
+| `quarterly_report.docx` | Signal | text + a table (extracted into the workbook) |
+| `sample_paper_wine.pdf` | Paper Lab (Study + Experiment) | real text-layer PDF; mentions **wine** → auto-fetch works |
+| `sample_paper.docx` | Paper Lab | `uv run python ../../docs/samples/make_sample_paper.py` (iris paper) |
+
+**Tip:** drop `customers.csv` + `messy_finance.xlsx` + `quarterly_report.docx` **together** into Signal
+Lab to see multi-format consolidation. Use `churn_clean.csv` for a clean Red-Team **PASS** to contrast
+with `leaky.csv`'s **FAIL**. Upload `sample_paper_wine.pdf` to Paper Lab, then Experiment → it
+auto-fetches the wine dataset.
 
 ---
 
