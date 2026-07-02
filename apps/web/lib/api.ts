@@ -175,6 +175,23 @@ export type NodeRunResult = {
   paper_reported: string;
 };
 
+export type Hypothesis = {
+  id: string;
+  text: string;
+  elo: number;
+  rank: number;
+  critique?: string;
+  origin?: string;
+};
+export type IdeationSession = {
+  id: string;
+  goal: string;
+  status: string;
+  hypotheses: Hypothesis[];
+  meta_review: string;
+  created_at: string;
+};
+
 // ---------------- endpoint helpers ----------------
 export const Api = {
   register: (email: string, password: string, full_name: string) =>
@@ -232,6 +249,11 @@ export const Api = {
     nodeId: string,
     body: { dataset_id: string; component_id?: string; params?: Record<string, unknown> },
   ) => apiPost<NodeRunResult>(`/api/experiments/${expId}/nodes/${nodeId}/run`, body),
+
+  runIdeation: (projectId: string, body: { goal: string; n?: number; evolve_n?: number }) =>
+    apiPost<IdeationSession>(`/api/projects/${projectId}/ideation`, body),
+  listIdeation: (projectId: string) =>
+    apiGet<IdeationSession[]>(`/api/projects/${projectId}/ideation`),
 
   runComponent: (
     projectId: string,

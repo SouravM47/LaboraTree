@@ -15,6 +15,7 @@ from .api import (
     experiments,
     gates,
     health,
+    ideation,
     orgs,
     papers,
     projects,
@@ -67,6 +68,7 @@ app.include_router(gates.router)
 app.include_router(signal.router)
 app.include_router(papers.router)
 app.include_router(experiments.router)
+app.include_router(ideation.router)
 app.include_router(components.router)
 
 
