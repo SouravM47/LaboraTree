@@ -87,6 +87,13 @@ export async function downloadBlob(path: string, filename: string): Promise<void
   URL.revokeObjectURL(url);
 }
 
+export async function openBlob(path: string): Promise<void> {
+  const res = await fetch(`${API_URL}${path}`, { headers: authHeaders() });
+  if (!res.ok) throw new ApiError(res.status, "open failed");
+  const blob = await res.blob();
+  window.open(URL.createObjectURL(blob), "_blank");
+}
+
 // ---------------- typed shapes ----------------
 export type TokenOut = { access_token: string; org_id: string };
 export type Me = { id: string; email: string; full_name: string; active_org_id: string; role: string };
@@ -192,6 +199,21 @@ export type IdeationSession = {
   created_at: string;
 };
 
+export type Trust = {
+  score: number;
+  reproducibility: number;
+  evidence_coverage: number;
+  leakage_flags: number;
+  n_runs: number;
+};
+export type ReportResult = {
+  run_id: string;
+  artifact_id: string;
+  download_url: string;
+  trust: Trust;
+  project: string;
+};
+
 // ---------------- endpoint helpers ----------------
 export const Api = {
   register: (email: string, password: string, full_name: string) =>
@@ -254,6 +276,9 @@ export const Api = {
     apiPost<IdeationSession>(`/api/projects/${projectId}/ideation`, body),
   listIdeation: (projectId: string) =>
     apiGet<IdeationSession[]>(`/api/projects/${projectId}/ideation`),
+
+  generateReport: (projectId: string) =>
+    apiPost<ReportResult>(`/api/projects/${projectId}/report`),
 
   runComponent: (
     projectId: string,

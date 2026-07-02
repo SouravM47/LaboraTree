@@ -19,6 +19,7 @@ from .api import (
     orgs,
     papers,
     projects,
+    reports,
     runs,
     signal,
 )
@@ -69,6 +70,7 @@ app.include_router(signal.router)
 app.include_router(papers.router)
 app.include_router(experiments.router)
 app.include_router(ideation.router)
+app.include_router(reports.router)
 app.include_router(components.router)
 
 
