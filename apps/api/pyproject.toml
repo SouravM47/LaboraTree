@@ -25,6 +25,7 @@ dependencies = [
     "pandas>=2.2",
     "numpy>=1.26",
     "openpyxl>=3.1",
+    "scikit-learn>=1.4",
     # signal lab: multi-format extraction
     "pdfplumber>=0.11",
     "python-docx>=1.1",

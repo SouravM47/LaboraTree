@@ -34,7 +34,9 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="mx-auto mt-10 max-w-md">
+    <div className="mx-auto mt-6 max-w-md">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/logo.png" alt="Laboratree" className="mx-auto mb-4 h-44 w-auto" />
       <div className="rounded-2xl border border-line bg-white p-8">
         <h1 className="font-display text-2xl text-forest">
           {mode === "login" ? "Welcome back" : "Create your lab"}

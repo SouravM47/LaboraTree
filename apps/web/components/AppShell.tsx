@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import BrandMark from "@/components/BrandMark";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -9,13 +10,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen flex-col">
       <header className="border-b border-line bg-white">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
-          <Link href="/" className="flex items-center gap-2">
-            <span className="grid h-7 w-7 place-items-center rounded-full bg-forest text-sm text-white">
-              ▲
-            </span>
-            <span className="font-display text-lg font-semibold text-forest">Laboratree</span>
-            <span className="hidden text-xs uppercase tracking-widest text-leaf sm:inline">
-              Grow · Innovate · Impact
+          <Link href="/" className="flex items-center gap-2.5">
+            <BrandMark size={40} />
+            <span className="flex items-baseline gap-3">
+              <span className="font-display text-2xl font-semibold tracking-tight">
+                <span className="text-forest">Labora</span>
+                <span className="text-leaf">tree</span>
+              </span>
+              <span className="hidden text-[11px] font-medium uppercase tracking-[0.25em] text-leaf sm:inline">
+                Grow · Innovate · Impact
+              </span>
             </span>
           </Link>
           {user ? (
