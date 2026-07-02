@@ -1,66 +1,83 @@
-import SystemStatus from "@/components/SystemStatus";
+"use client";
 
-const LABS: { name: string; blurb: string; badge: string }[] = [
-  { name: "Signal Lab", blurb: "Any raw mix → one consolidated master workbook.", badge: "flagship" },
-  { name: "Paper Lab · Study", blurb: "Plain-language paper card + chat + explain-simpler.", badge: "flagship" },
-  { name: "Paper Lab · Experiment", blurb: "Auto-fetch data, reproduce & out-explore the paper.", badge: "flagship" },
-  { name: "Data Lab", blurb: "Connectors + transforms with leakage checks.", badge: "core" },
-  { name: "Insight Lab", blurb: "EDA + charts with causal-discovery hints.", badge: "core" },
-  { name: "Model Lab", blurb: "ML · DL · econometrics · time-series · anomaly.", badge: "core" },
-  { name: "Trend Lab", blurb: "Decomposition + causal impact.", badge: "scaffold" },
-  { name: "Decision Lab", blurb: "Counterfactual, uncertainty-aware recommendations.", badge: "scaffold" },
-  { name: "Ideation Lab", blurb: "Co-Scientist hypothesis tournament.", badge: "scaffold" },
-];
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Api, type Project } from "@/lib/api";
+import { useRequireAuth } from "@/lib/auth";
 
-export default function Home() {
+export default function Dashboard() {
+  const { user, loading } = useRequireAuth();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user) Api.listProjects().then(setProjects).catch(() => setProjects([]));
+  }, [user]);
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const p = await Api.createProject(name.trim());
+      setProjects((prev) => [p, ...prev]);
+      setName("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading || !user) return <p className="text-muted">Loading…</p>;
+
   return (
-    <main className="mx-auto max-w-5xl px-6 py-16">
-      <header className="text-center">
-        <p className="font-display text-sm uppercase tracking-[0.3em] text-leaf">
-          Grow · Innovate · Impact
-        </p>
-        <h1 className="mt-3 font-display text-5xl font-semibold text-forest">Laboratree</h1>
-        <p className="mx-auto mt-4 max-w-2xl text-lg text-muted">
-          The trustworthy, agentic, human-in-the-loop research lab — every result provably backed
-          by a re-runnable execution.
-        </p>
-      </header>
-
-      <section className="mt-14">
-        <h2 className="font-display text-xl text-forest">System</h2>
-        <div className="mt-4">
-          <SystemStatus />
+    <div>
+      <div className="flex items-end justify-between">
+        <div>
+          <h1 className="font-display text-3xl text-forest">Projects</h1>
+          <p className="mt-1 text-muted">Each project is a research workspace.</p>
         </div>
-      </section>
+        <form onSubmit={create} className="flex gap-2">
+          <input
+            className="rounded-lg border border-line px-3 py-2 outline-none focus:border-leaf"
+            placeholder="New project name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <button
+            disabled={busy}
+            className="rounded-lg bg-leaf px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Create
+          </button>
+        </form>
+      </div>
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
-      <section className="mt-14">
-        <h2 className="font-display text-xl text-forest">Labs</h2>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {LABS.map((lab) => (
-            <div key={lab.name} className="rounded-2xl border border-line bg-white p-5">
-              <div className="flex items-center justify-between">
-                <h3 className="font-medium text-forest">{lab.name}</h3>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs ${
-                    lab.badge === "flagship"
-                      ? "bg-leaf/20 text-forest"
-                      : lab.badge === "core"
-                        ? "bg-sprout/30 text-forest"
-                        : "bg-line text-muted"
-                  }`}
-                >
-                  {lab.badge}
-                </span>
-              </div>
-              <p className="mt-2 text-sm text-muted">{lab.blurb}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <footer className="mt-16 border-t border-line pt-6 text-center text-sm text-muted">
-        Laboratree · v0.1 foundation
-      </footer>
-    </main>
+      <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {projects.map((p) => (
+          <Link
+            key={p.id}
+            href={`/projects/${p.id}`}
+            className="rounded-2xl border border-line bg-white p-5 transition hover:border-leaf"
+          >
+            <h3 className="font-medium text-forest">{p.name}</h3>
+            <p className="mt-1 line-clamp-2 text-sm text-muted">
+              {p.description || "Open workspace →"}
+            </p>
+            <p className="mt-3 text-xs text-muted">
+              {new Date(p.created_at).toLocaleDateString()}
+            </p>
+          </Link>
+        ))}
+        {projects.length === 0 && (
+          <p className="text-muted">No projects yet — create one to get started.</p>
+        )}
+      </div>
+    </div>
   );
 }
