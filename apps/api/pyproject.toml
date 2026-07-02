@@ -25,9 +25,14 @@ dependencies = [
     "pandas>=2.2",
     "numpy>=1.26",
     "openpyxl>=3.1",
-    # llm
+    # llm + agents
     "openai>=1.40",
     "httpx>=0.27",
+    "langgraph>=0.2.60",
+    "langgraph-checkpoint-postgres>=2.0",
+    "langchain-openai>=0.2",
+    # sandbox code execution
+    "docker>=7.1",
     # auth (used in Phase 2)
     "pyjwt>=2.8",
     "bcrypt>=4.1",

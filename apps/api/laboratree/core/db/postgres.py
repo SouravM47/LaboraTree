@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from ..config import settings
 
@@ -26,7 +27,9 @@ class Base(DeclarativeBase):
 def engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        _engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True, future=True)
+        # NullPool: don't cache connections across event loops (safe for TestClient/ASGI portals
+        # and dev). Put a real pool (or pgbouncer) in front for production throughput.
+        _engine = create_async_engine(settings.postgres_dsn, poolclass=NullPool, future=True)
     return _engine
 
 
