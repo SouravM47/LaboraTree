@@ -64,6 +64,13 @@ export function apiPost<T>(path: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
+export function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
 export function apiUpload<T>(path: string, form: FormData): Promise<T> {
   return request<T>(path, { method: "POST", headers: authHeaders(), body: form });
 }
@@ -125,6 +132,9 @@ export type Paper = {
 };
 export type ChatAnswer = { answer: string; citations: number[]; used: { ordinal: number; text: string }[] };
 
+export type Member = { user_id: string; email: string; full_name: string; role: string };
+export const ROLES = ["viewer", "analyst", "admin", "owner"] as const;
+
 // ---------------- endpoint helpers ----------------
 export const Api = {
   register: (email: string, password: string, full_name: string) =>
@@ -160,4 +170,10 @@ export const Api = {
     }),
   chat: (id: string, question: string) =>
     apiPost<ChatAnswer>(`/api/papers/${id}/chat`, { question }),
+
+  listMembers: (orgId: string) => apiGet<Member[]>(`/api/orgs/${orgId}/members`),
+  addMember: (orgId: string, email: string, role: string) =>
+    apiPost<Member>(`/api/orgs/${orgId}/members`, { email, role }),
+  setMemberRole: (orgId: string, userId: string, role: string) =>
+    apiPatch<Member>(`/api/orgs/${orgId}/members/${userId}`, { role }),
 };
