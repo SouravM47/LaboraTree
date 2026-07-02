@@ -232,4 +232,18 @@ export const Api = {
     nodeId: string,
     body: { dataset_id: string; component_id?: string; params?: Record<string, unknown> },
   ) => apiPost<NodeRunResult>(`/api/experiments/${expId}/nodes/${nodeId}/run`, body),
+
+  runComponent: (
+    projectId: string,
+    component_id: string,
+    params: Record<string, unknown>,
+    dataset: Record<string, unknown>[],
+  ) =>
+    apiPost<RunPreview>(`/api/projects/${projectId}/runs`, { component_id, params, dataset }),
+};
+
+export type RunPreview = {
+  run: { id: string; status: string; repro_manifest: Record<string, unknown> };
+  evidence_count: number;
+  preview: Record<string, unknown>;
 };
