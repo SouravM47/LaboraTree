@@ -22,6 +22,13 @@ class PaperStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class ExperimentStatus(str, enum.Enum):
+    CREATED = "created"
+    AWAITING_DATA = "awaiting_data"   # HITL: some datasets need manual upload
+    READY = "ready"                   # all data present; walkthrough runnable
+    FAILED = "failed"
+
+
 class Paper(PkMixin, OrgScopedMixin, TimestampMixin, Base):
     __tablename__ = "papers"
 
@@ -57,3 +64,24 @@ class PaperChunk(PkMixin, OrgScopedMixin, TimestampMixin, Base):
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
 
     paper: Mapped[Paper] = relationship(back_populates="chunks")
+
+
+class Experiment(PkMixin, OrgScopedMixin, TimestampMixin, Base):
+    """A reproduce-and-explore run of a paper: fetched data + pipeline walkthrough."""
+
+    __tablename__ = "experiments"
+
+    paper_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("papers.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[ExperimentStatus] = mapped_column(
+        Enum(ExperimentStatus, name="experiment_status", native_enum=False,
+             values_callable=lambda e: [m.value for m in e]),
+        default=ExperimentStatus.CREATED,
+        nullable=False,
+    )
+    walkthrough: Mapped[list] = mapped_column(JSONB, default=list)   # ordered node graph
+    fetch_report: Mapped[dict] = mapped_column(JSONB, default=dict)  # {fetched:[...], unresolved:[...]}
