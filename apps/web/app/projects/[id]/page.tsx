@@ -7,9 +7,11 @@ import { Api, type Project } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
 import SignalLab from "@/components/SignalLab";
 import PapersLab from "@/components/PapersLab";
+import InsightLab from "@/components/InsightLab";
 
 const TABS = [
   { key: "signal", label: "Signal Lab" },
+  { key: "insight", label: "Insight Lab" },
   { key: "papers", label: "Paper Lab" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
@@ -58,6 +60,7 @@ export default function ProjectWorkspace() {
 
       <div className="mt-6">
         {tab === "signal" && <SignalLab projectId={projectId} />}
+        {tab === "insight" && <InsightLab projectId={projectId} />}
         {tab === "papers" && <PapersLab projectId={projectId} />}
       </div>
     </div>
