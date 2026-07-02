@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import components, health
+from .api import auth, components, health, orgs, projects
 from .core.config import settings
 from .core.db import mongo, neo4j, postgres, redis
 from .core.registry import discover
@@ -46,6 +46,9 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(auth.router)
+app.include_router(orgs.router)
+app.include_router(projects.router)
 app.include_router(components.router)
 
 

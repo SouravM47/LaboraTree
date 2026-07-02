@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # --- App ---
     app_env: str = "development"
     api_port: int = 8000
-    secret_key: str = "dev-secret-change-me"
+    secret_key: str = "dev-secret-change-me-to-a-long-random-value-32b+"
     log_level: str = "INFO"
 
     # --- LLM provider: "azure" | "openai" ---
