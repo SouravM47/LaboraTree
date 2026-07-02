@@ -9,9 +9,19 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
 from ..config import settings
+
+
+def resolve_azure_api_version(base_url: str, configured: str) -> str:
+    """The /openai/v1 route only accepts 'preview'/'latest'; dated versions 400.
+
+    Falls back to the configured value for the legacy deployments route.
+    """
+    if base_url.rstrip("/").endswith("/openai/v1"):
+        return "preview"
+    return configured
 
 
 class LLMClient:
@@ -21,10 +31,11 @@ class LLMClient:
         self.provider = settings.llm_provider.lower()
         if self.provider == "azure":
             base_url = settings.azure_openai_v1_endpoint.rstrip("/")
+            api_version = resolve_azure_api_version(base_url, settings.azure_openai_api_version)
             self._client = OpenAI(
                 api_key=settings.azure_openai_api_key,
                 base_url=base_url,
-                default_query={"api-version": settings.azure_openai_api_version},
+                default_query={"api-version": api_version},
             )
             self._chat_model = settings.azure_openai_deployment_name
             self._embed_model = settings.azure_openai_embedding_deployment
@@ -59,7 +70,15 @@ class LLMClient:
         if self._temperature is not None:
             params["temperature"] = self._temperature
         params.update(kw)
-        resp = self._client.chat.completions.create(**params)
+        try:
+            resp = self._client.chat.completions.create(**params)
+        except BadRequestError as exc:
+            # Some models (e.g. gpt-5.x reasoning) reject a non-default temperature; retry without.
+            if "temperature" in str(exc) and "temperature" in params:
+                params.pop("temperature")
+                resp = self._client.chat.completions.create(**params)
+            else:
+                raise
         return resp.choices[0].message.content or ""
 
     def embed(self, texts: list[str]) -> list[list[float]]:
