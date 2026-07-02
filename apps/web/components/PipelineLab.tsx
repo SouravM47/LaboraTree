@@ -6,6 +6,7 @@ import "@xyflow/react/dist/style.css";
 import Papa from "papaparse";
 import { Api, type ComponentSpecLite, type PipelineResult } from "@/lib/api";
 import FileDropzone from "@/components/FileDropzone";
+import ProvenanceBadge from "@/components/ProvenanceBadge";
 
 type Step = { component_id: string; paramsText: string };
 
@@ -133,6 +134,7 @@ export default function PipelineLab({ projectId }: { projectId: string }) {
                       r.status === "succeeded" ? "bg-leaf/20 text-forest" : "bg-red-100 text-red-700"
                     }`}>{r.status}{r.evidence_count != null ? ` · ${r.evidence_count} evidence` : ""}</span>
                   )}
+                  {r?.run_id && <ProvenanceBadge runId={r.run_id} />}
                   <button onClick={() => setSteps(steps.filter((_, j) => j !== i))}
                     className="text-sm text-muted hover:text-red-600">remove</button>
                 </div>

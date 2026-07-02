@@ -240,6 +240,23 @@ export type PipelineStepResult = {
 };
 export type PipelineResult = { steps: PipelineStepResult[]; n_rows_final: number; ok: boolean };
 
+export type RunDetail = {
+  id: string;
+  status: string;
+  lab: string;
+  component_id: string | null;
+  error: string | null;
+  repro_manifest: Record<string, unknown>;
+  created_at: string;
+};
+export type EvidenceItem = {
+  id: string;
+  label: string;
+  kind: string;
+  value: unknown;
+  meta: Record<string, unknown>;
+};
+
 // ---------------- endpoint helpers ----------------
 export const Api = {
   register: (email: string, password: string, full_name: string) =>
@@ -319,6 +336,8 @@ export const Api = {
   pilot: (projectId: string, body: { questions: string[]; persona: string; n: number }) =>
     apiPost<PilotResult>(`/api/projects/${projectId}/collection/pilot`, body),
 
+  getRun: (id: string) => apiGet<RunDetail>(`/api/runs/${id}`),
+  getRunEvidence: (id: string) => apiGet<EvidenceItem[]>(`/api/runs/${id}/evidence`),
   listComponents: () =>
     apiGet<{ count: number; components: ComponentSpecLite[] }>("/api/components"),
   runPipeline: (
