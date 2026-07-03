@@ -3,16 +3,28 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Api, type Project } from "@/lib/api";
+import { Api, openBlob, type Project } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
 import SignalLab from "@/components/SignalLab";
 import PapersLab from "@/components/PapersLab";
 import InsightLab from "@/components/InsightLab";
+import IdeationLab from "@/components/IdeationLab";
+import TrendLab from "@/components/TrendLab";
+import DecisionLab from "@/components/DecisionLab";
+import CollectionLab from "@/components/CollectionLab";
+import PipelineLab from "@/components/PipelineLab";
+import LlmActivity from "@/components/LlmActivity";
 
 const TABS = [
+  { key: "ideation", label: "Ideation Lab" },
+  { key: "collection", label: "Collection Lab" },
   { key: "signal", label: "Signal Lab" },
   { key: "insight", label: "Insight Lab" },
+  { key: "trend", label: "Trend Lab" },
+  { key: "decision", label: "Decision Lab" },
   { key: "papers", label: "Paper Lab" },
+  { key: "pipeline", label: "Pipeline" },
+  { key: "llm", label: "LLM Activity" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
@@ -23,6 +35,21 @@ export default function ProjectWorkspace() {
   const [project, setProject] = useState<Project | null>(null);
   const [tab, setTab] = useState<TabKey>("signal");
   const [error, setError] = useState<string | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [trustScore, setTrustScore] = useState<number | null>(null);
+
+  async function makeReport() {
+    setReportBusy(true);
+    try {
+      const r = await Api.generateReport(projectId);
+      setTrustScore(r.trust.score);
+      await openBlob(r.download_url);
+    } catch {
+      /* ignore */
+    } finally {
+      setReportBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (user && projectId) {
@@ -40,7 +67,23 @@ export default function ProjectWorkspace() {
       <Link href="/" className="text-sm text-muted hover:text-forest">
         ← Projects
       </Link>
-      <h1 className="mt-2 font-display text-3xl text-forest">{project?.name ?? "…"}</h1>
+      <div className="mt-2 flex items-center justify-between">
+        <h1 className="font-display text-3xl text-forest">{project?.name ?? "…"}</h1>
+        <div className="flex items-center gap-3">
+          {trustScore !== null && (
+            <span className="rounded-full bg-leaf/15 px-3 py-1 text-sm text-forest">
+              trust {trustScore}/100
+            </span>
+          )}
+          <button
+            onClick={makeReport}
+            disabled={reportBusy}
+            className="rounded-lg bg-forest px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {reportBusy ? "Building…" : "Report card"}
+          </button>
+        </div>
+      </div>
 
       <div className="mt-6 flex gap-2 border-b border-line">
         {TABS.map((t) => (
@@ -59,9 +102,15 @@ export default function ProjectWorkspace() {
       </div>
 
       <div className="mt-6">
+        {tab === "ideation" && <IdeationLab projectId={projectId} />}
+        {tab === "collection" && <CollectionLab projectId={projectId} />}
         {tab === "signal" && <SignalLab projectId={projectId} />}
         {tab === "insight" && <InsightLab projectId={projectId} />}
+        {tab === "trend" && <TrendLab projectId={projectId} />}
+        {tab === "decision" && <DecisionLab projectId={projectId} />}
         {tab === "papers" && <PapersLab projectId={projectId} />}
+        {tab === "pipeline" && <PipelineLab projectId={projectId} />}
+        {tab === "llm" && <LlmActivity projectId={projectId} />}
       </div>
     </div>
   );

@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     blob_backend: str = "local"
     blob_local_root: str = ""
 
+    # --- LLM observability ---
+    llm_tracing: bool = True
+    llm_price_per_1k: float | None = None      # optional cost estimate = tokens/1000 * this
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+
     # ---------- derived ----------
     @property
     def postgres_dsn(self) -> str:
@@ -87,6 +94,14 @@ class Settings(BaseSettings):
         """Sync DSN for Alembic migrations."""
         return (
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def postgres_psycopg_dsn(self) -> str:
+        """Plain libpq DSN for a raw psycopg connection (LLM trace writes)."""
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 

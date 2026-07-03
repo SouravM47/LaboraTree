@@ -6,12 +6,14 @@ gpt-5.x deployments and serverless models (e.g. DeepSeek). Swapping providers is
 
 from __future__ import annotations
 
+import time
 from functools import lru_cache
 from typing import Any
 
 from openai import BadRequestError, OpenAI
 
 from ..config import settings
+from .observability import record_llm_call
 
 
 def resolve_azure_api_version(base_url: str, configured: str) -> str:
@@ -70,20 +72,47 @@ class LLMClient:
         if self._temperature is not None:
             params["temperature"] = self._temperature
         params.update(kw)
+        start = time.perf_counter()
         try:
-            resp = self._client.chat.completions.create(**params)
-        except BadRequestError as exc:
-            # Some models (e.g. gpt-5.x reasoning) reject a non-default temperature; retry without.
-            if "temperature" in str(exc) and "temperature" in params:
-                params.pop("temperature")
+            try:
                 resp = self._client.chat.completions.create(**params)
-            else:
-                raise
+            except BadRequestError as exc:
+                # gpt-5.x reasoning models reject a non-default temperature; retry without.
+                if "temperature" in str(exc) and "temperature" in params:
+                    params.pop("temperature")
+                    resp = self._client.chat.completions.create(**params)
+                else:
+                    raise
+        except Exception as exc:
+            self._trace(params.get("model", ""), role, None,
+                        (time.perf_counter() - start) * 1000, "error", str(exc))
+            raise
+        self._trace(params["model"], role, getattr(resp, "usage", None),
+                    (time.perf_counter() - start) * 1000, "ok", None)
         return resp.choices[0].message.content or ""
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        resp = self._client.embeddings.create(model=self._embed_model, input=texts)
+        start = time.perf_counter()
+        try:
+            resp = self._client.embeddings.create(model=self._embed_model, input=texts)
+        except Exception as exc:
+            self._trace(self._embed_model, "embed", None,
+                        (time.perf_counter() - start) * 1000, "error", str(exc))
+            raise
+        self._trace(self._embed_model, "embed", getattr(resp, "usage", None),
+                    (time.perf_counter() - start) * 1000, "ok", None)
         return [item.embedding for item in resp.data]
+
+    def _trace(self, model, role, usage, latency_ms, status, error) -> None:
+        pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        ct = int(getattr(usage, "completion_tokens", 0) or 0)
+        tt = int(getattr(usage, "total_tokens", 0) or (pt + ct))
+        try:
+            record_llm_call(provider=self.provider, model=model or "", role=role, prompt_tokens=pt,
+                            completion_tokens=ct, total_tokens=tt, latency_ms=latency_ms,
+                            status=status, error=error)
+        except Exception:
+            pass
 
     def configured(self) -> bool:
         """Whether an API key is present (agents can run)."""

@@ -87,6 +87,13 @@ export async function downloadBlob(path: string, filename: string): Promise<void
   URL.revokeObjectURL(url);
 }
 
+export async function openBlob(path: string): Promise<void> {
+  const res = await fetch(`${API_URL}${path}`, { headers: authHeaders() });
+  if (!res.ok) throw new ApiError(res.status, "open failed");
+  const blob = await res.blob();
+  window.open(URL.createObjectURL(blob), "_blank");
+}
+
 // ---------------- typed shapes ----------------
 export type TokenOut = { access_token: string; org_id: string };
 export type Me = { id: string; email: string; full_name: string; active_org_id: string; role: string };
@@ -107,20 +114,33 @@ export type SignalSummary = {
 };
 
 export type MathItem = { formula: string; explanation: string };
-export type PaperCardData = {
-  problem_statement: string;
-  models_used: string[];
+export type ProblemStatement = { one_liner: string; plain: string };
+export type CardVariable = { name: string; description: string; example_value: string };
+export type CardModel = { name: string; summary: string };
+export type EmpiricalCard = {
+  paper_type: "empirical";
+  problem_statement: ProblemStatement;
+  models_used: CardModel[];
   data_sources: string[];
   preprocessing: string[];
   data_sample: string;
-  independent_variables: string[];
-  target_variable: string;
+  independent_variables: CardVariable[];
+  target_variable: CardVariable;
   variants: string[];
   math: MathItem[];
   results: string;
   inference: string;
-  [k: string]: unknown;
 };
+export type Segment = { heading: string; body: string; analogy: string };
+export type ConceptualCard = {
+  paper_type: "conceptual";
+  one_liner: string;
+  problem_statement: ProblemStatement;
+  segments: Segment[];
+  glossary: { term: string; definition: string }[];
+  takeaways: string[];
+};
+export type PaperCardData = EmpiricalCard | ConceptualCard;
 export type Paper = {
   id: string;
   title: string;
@@ -151,6 +171,7 @@ export type FetchedDataset = {
   source: string;
   n_rows: number | null;
   n_cols: number | null;
+  synthetic?: boolean;
 };
 export type Unresolved = {
   name: string;
@@ -173,6 +194,100 @@ export type NodeRunResult = {
   forked: boolean;
   metrics: Record<string, number>;
   paper_reported: string;
+  synthetic?: boolean;
+};
+
+export type LlmCall = {
+  id: string;
+  lab: string;
+  operation: string;
+  provider: string;
+  model: string;
+  role: string;
+  total_tokens: number;
+  latency_ms: number;
+  cost_usd: number | null;
+  status: string;
+  created_at: string;
+};
+export type LlmSummary = {
+  by_lab: { lab: string; calls: number; tokens: number; cost_usd: number; avg_latency_ms: number }[];
+  totals: { calls: number; tokens: number; cost_usd: number };
+};
+
+export type Hypothesis = {
+  id: string;
+  text: string;
+  elo: number;
+  rank: number;
+  critique?: string;
+  origin?: string;
+};
+export type IdeationSession = {
+  id: string;
+  goal: string;
+  status: string;
+  hypotheses: Hypothesis[];
+  meta_review: string;
+  created_at: string;
+};
+
+export type Trust = {
+  score: number;
+  reproducibility: number;
+  evidence_coverage: number;
+  leakage_flags: number;
+  n_runs: number;
+};
+export type ReportResult = {
+  run_id: string;
+  artifact_id: string;
+  download_url: string;
+  trust: Trust;
+  project: string;
+};
+
+export type SurveyQuestion = { id: string; text: string; type: string; options?: string[] };
+export type BiasFinding = { question: string; issue: string; severity: string; suggestion: string };
+export type SampleResult = {
+  sample_size: number;
+  unadjusted: number;
+  params: Record<string, unknown>;
+};
+export type PilotResult = { persona: string; n: number; respondents: Record<string, string>[] };
+
+export type ComponentSpecLite = {
+  id: string;
+  name: string;
+  kind: string;
+  summary: string;
+  tags: string[];
+};
+export type PipelineStepResult = {
+  component_id: string;
+  run_id?: string;
+  status: string;
+  evidence_count?: number;
+  preview?: Record<string, unknown>;
+  error?: string;
+};
+export type PipelineResult = { steps: PipelineStepResult[]; n_rows_final: number; ok: boolean };
+
+export type RunDetail = {
+  id: string;
+  status: string;
+  lab: string;
+  component_id: string | null;
+  error: string | null;
+  repro_manifest: Record<string, unknown>;
+  created_at: string;
+};
+export type EvidenceItem = {
+  id: string;
+  label: string;
+  kind: string;
+  value: unknown;
+  meta: Record<string, unknown>;
 };
 
 // ---------------- endpoint helpers ----------------
@@ -203,11 +318,9 @@ export const Api = {
   getPaper: (id: string) => apiGet<Paper>(`/api/papers/${id}`),
   makeCard: (id: string, regenerate = false) =>
     apiPost<Paper>(`/api/papers/${id}/card?regenerate=${regenerate}`),
-  simplify: (id: string, field: string, level: number) =>
-    apiPost<{ field: string; level: number; simplified: string }>(`/api/papers/${id}/simplify`, {
-      field,
-      level,
-    }),
+  simplify: (id: string, body: { field?: string; text?: string; level: number }) =>
+    apiPost<{ field: string; level: number; simplified: string }>(
+      `/api/papers/${id}/simplify`, body),
   chat: (id: string, question: string) =>
     apiPost<ChatAnswer>(`/api/papers/${id}/chat`, { question }),
 
@@ -232,6 +345,44 @@ export const Api = {
     nodeId: string,
     body: { dataset_id: string; component_id?: string; params?: Record<string, unknown> },
   ) => apiPost<NodeRunResult>(`/api/experiments/${expId}/nodes/${nodeId}/run`, body),
+  demoData: (expId: string) =>
+    apiPost<Experiment & { caveat: string }>(`/api/experiments/${expId}/demo-data`),
+
+  llmSummary: (projectId: string) => apiGet<LlmSummary>(`/api/projects/${projectId}/llm/summary`),
+  llmCalls: (projectId: string) => apiGet<LlmCall[]>(`/api/projects/${projectId}/llm/calls`),
+
+  runIdeation: (projectId: string, body: { goal: string; n?: number; evolve_n?: number }) =>
+    apiPost<IdeationSession>(`/api/projects/${projectId}/ideation`, body),
+  listIdeation: (projectId: string) =>
+    apiGet<IdeationSession[]>(`/api/projects/${projectId}/ideation`),
+
+  generateReport: (projectId: string) =>
+    apiPost<ReportResult>(`/api/projects/${projectId}/report`),
+
+  designQuestionnaire: (projectId: string, body: { goal: string; audience: string; n: number }) =>
+    apiPost<{ questions: SurveyQuestion[] }>(
+      `/api/projects/${projectId}/collection/questionnaire`, body),
+  biasCheck: (projectId: string, questions: string[]) =>
+    apiPost<{ findings: BiasFinding[] }>(
+      `/api/projects/${projectId}/collection/bias-check`, { questions }),
+  sampleSize: (
+    projectId: string,
+    body: { confidence: number; margin: number; population?: number | null; proportion: number },
+  ) => apiPost<SampleResult>(`/api/projects/${projectId}/collection/sample-size`, body),
+  pilot: (projectId: string, body: { questions: string[]; persona: string; n: number }) =>
+    apiPost<PilotResult>(`/api/projects/${projectId}/collection/pilot`, body),
+
+  getRun: (id: string) => apiGet<RunDetail>(`/api/runs/${id}`),
+  getRunEvidence: (id: string) => apiGet<EvidenceItem[]>(`/api/runs/${id}/evidence`),
+  listComponents: () =>
+    apiGet<{ count: number; components: ComponentSpecLite[] }>("/api/components"),
+  runPipeline: (
+    projectId: string,
+    body: {
+      steps: { component_id: string; params: Record<string, unknown> }[];
+      dataset?: Record<string, unknown>[] | null;
+    },
+  ) => apiPost<PipelineResult>(`/api/projects/${projectId}/pipeline/run`, body),
 
   runComponent: (
     projectId: string,

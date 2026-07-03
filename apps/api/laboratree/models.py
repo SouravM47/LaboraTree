@@ -7,6 +7,9 @@ from .projects.models import (  # noqa: F401
     Evidence,
     GateStatus,
     GateTask,
+    IdeationSession,
+    IdeationStatus,
+    LLMCall,
     Project,
     Run,
     RunStatus,
@@ -39,4 +42,7 @@ __all__ = [
     "PaperStatus",
     "Experiment",
     "ExperimentStatus",
+    "IdeationSession",
+    "IdeationStatus",
+    "LLMCall",
 ]

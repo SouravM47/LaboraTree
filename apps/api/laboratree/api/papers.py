@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from ..core.deps import PrincipalDep, SessionDep
+from ..core.llm.context import use_llm_context
 from ..core.storage import get_blob_store
 from ..labs.paper import llm as paper_llm
 from ..labs.paper.card import generate_card
@@ -136,7 +137,8 @@ async def make_card(
     if paper.card and not regenerate:
         return paper
     text = await _paper_text(session, paper)
-    paper.card = generate_card(text, complete_fn=paper_llm.default_complete)
+    with use_llm_context("paper", "card", project_id=paper.project_id, org_id=principal.org_id):
+        paper.card = generate_card(text, complete_fn=paper_llm.default_complete)
     paper.status = PaperStatus.CARDED
     await session.commit()
     await session.refresh(paper)
@@ -154,7 +156,8 @@ async def simplify(
     if not source:
         raise HTTPException(status_code=400, detail="nothing to simplify (give field or text)")
 
-    result = simplify_text(source, body.level, complete_fn=paper_llm.default_complete)
+    with use_llm_context("paper", "simplify", project_id=paper.project_id, org_id=principal.org_id):
+        result = simplify_text(source, body.level, complete_fn=paper_llm.default_complete)
 
     # cache per field+level
     key = body.field or "_text"
@@ -170,11 +173,12 @@ async def chat(
     paper_id: uuid.UUID, body: ChatIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
     paper = await _require_paper(session, principal, paper_id)
-    passages = await retrieve(
-        session,
-        paper_id=paper.id,
-        org_id=principal.org_id,
-        query=body.question,
-        embed_fn=paper_llm.default_embed,
-    )
-    return rag_answer(body.question, passages, complete_fn=paper_llm.default_complete)
+    with use_llm_context("paper", "chat", project_id=paper.project_id, org_id=principal.org_id):
+        passages = await retrieve(
+            session,
+            paper_id=paper.id,
+            org_id=principal.org_id,
+            query=body.question,
+            embed_fn=paper_llm.default_embed,
+        )
+        return rag_answer(body.question, passages, complete_fn=paper_llm.default_complete)
