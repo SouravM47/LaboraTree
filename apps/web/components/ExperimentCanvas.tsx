@@ -16,6 +16,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   Api,
+  type ComponentSpecLite,
   type Experiment,
   type NodeRunResult,
   type Unresolved,
@@ -171,6 +172,15 @@ export default function ExperimentCanvas({ paperId }: { paperId: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [status, setStatus] = useState<Record<string, Status>>({});
   const [results, setResults] = useState<Record<string, NodeRunResult>>({});
+  const [models, setModels] = useState<ComponentSpecLite[]>([]);
+
+  // Every registered model becomes a fork option — so a new model added to the registry (or a
+  // paper naming a model we don't have) is always runnable via a comparable stand-in, no UI edit.
+  useEffect(() => {
+    Api.listComponents()
+      .then((r) => setModels(r.components.filter((c) => c.kind === "model")))
+      .catch(() => setModels([]));
+  }, []);
 
   async function start() {
     setBusy(true);
@@ -307,6 +317,7 @@ export default function ExperimentCanvas({ paperId }: { paperId: string }) {
         <NodeDetail
           exp={exp}
           node={selected}
+          models={models}
           status={selected ? status[selected.id] ?? "idle" : "idle"}
           result={selected ? results[selected.id] : undefined}
           onRun={async (node, datasetId, component) => {
@@ -332,7 +343,7 @@ export default function ExperimentCanvas({ paperId }: { paperId: string }) {
 
 /* ---------------- node detail ---------------- */
 
-const MODEL_OPTIONS = [
+const FALLBACK_MODELS: { id: string; label: string }[] = [
   { id: "model.ml.gradient_boosting", label: "Gradient boosting (trees)" },
   { id: "model.ml.logistic_regression", label: "Logistic regression" },
   { id: "model.ml.linear_regression", label: "Linear regression" },
@@ -341,19 +352,26 @@ const MODEL_OPTIONS = [
 function NodeDetail({
   exp,
   node,
+  models,
   status,
   result,
   onRun,
 }: {
   exp: Experiment;
   node: WalkNode | null;
+  models: ComponentSpecLite[];
   status: Status;
   result?: NodeRunResult;
   onRun: (node: WalkNode, datasetId: string, component: string) => Promise<void>;
 }) {
+  const modelOptions = models.length
+    ? models.map((m) => ({ id: m.id, label: m.name }))
+    : FALLBACK_MODELS;
   const [datasetId, setDatasetId] = useState(exp.fetch_report.fetched[0]?.dataset_id ?? "");
-  // Default to the paper's own component when the registry recognises it, else gradient boosting.
-  const [component, setComponent] = useState(node?.component_id ?? MODEL_OPTIONS[0].id);
+  // Default to the paper's own component when the registry recognises it, else its stand-in.
+  const [component, setComponent] = useState(
+    node?.component_id ?? node?.suggested_component ?? modelOptions[0].id,
+  );
 
   if (!node) {
     return (
@@ -433,11 +451,15 @@ function NodeDetail({
               {node.component_id && (
                 <option value={node.component_id}>As paper ({node.component_id})</option>
               )}
-              {MODEL_OPTIONS.filter((o) => o.id !== node.component_id).map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
+              {modelOptions
+                .filter((o) => o.id !== node.component_id)
+                .map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {node.suggested_component === o.id && nativeUnknown
+                      ? `${o.label} (suggested stand-in)`
+                      : o.label}
+                  </option>
+                ))}
             </select>
           </label>
           <button
@@ -451,6 +473,7 @@ function NodeDetail({
             <div className="rounded-lg bg-leaf/10 p-3">
               <p className="text-xs uppercase tracking-wide text-leaf">
                 Your run {result.forked ? "(forked)" : ""}
+                {result.stand_in ? " · stand-in model" : ""}
                 {result.synthetic ? " · synthetic" : ""}
               </p>
               <ul className="mt-1">

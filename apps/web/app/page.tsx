@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Api, type Project } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 export default function Dashboard() {
   const { user, loading } = useRequireAuth();
@@ -11,6 +12,8 @@ export default function Dashboard() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (user) Api.listProjects().then(setProjects).catch(() => setProjects([]));
@@ -32,15 +35,18 @@ export default function Dashboard() {
     }
   }
 
-  async function remove(p: Project) {
-    if (!confirm(`Delete project “${p.name}” and everything in it (papers, datasets, runs)? This cannot be undone.`))
-      return;
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
     setError(null);
     try {
-      await Api.deleteProject(p.id);
-      setProjects((prev) => prev.filter((x) => x.id !== p.id));
+      await Api.deleteProject(pendingDelete.id);
+      setProjects((prev) => prev.filter((x) => x.id !== pendingDelete.id));
+      setPendingDelete(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "delete failed");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -89,7 +95,7 @@ export default function Dashboard() {
             </Link>
             {canDelete && (
               <button
-                onClick={() => remove(p)}
+                onClick={() => setPendingDelete(p)}
                 title="Delete project"
                 aria-label={`Delete ${p.name}`}
                 className="absolute right-3 top-3 rounded-lg p-1.5 text-muted opacity-0 transition hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
@@ -106,6 +112,21 @@ export default function Dashboard() {
           <p className="text-muted">No projects yet — create one to get started.</p>
         )}
       </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete project?"
+        message={
+          <>
+            <b className="text-forest">{pendingDelete?.name}</b> and everything in it — papers,
+            datasets, runs and experiments — will be permanently deleted. This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete project"
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

@@ -116,7 +116,14 @@ export type SignalSummary = {
   };
 };
 
-export type MathItem = { formula: string; explanation: string };
+export type MathItem = {
+  formula: string;
+  plain?: string;
+  symbols?: string;
+  intuition?: string;
+  example?: string;
+  explanation?: string; // legacy
+};
 export type ProblemStatement = { one_liner: string; plain: string };
 export type CardVariable = { name: string; description: string; example_value: string };
 export type CardModel = {
@@ -170,6 +177,8 @@ export type WalkNode = {
   title: string;
   detail?: string;
   component_id?: string | null;
+  available?: boolean;              // false when the paper's model isn't a registered component
+  suggested_component?: string;     // comparable stand-in to run instead
   params?: Record<string, unknown>;
 };
 export type FetchedDataset = {
@@ -204,6 +213,7 @@ export type NodeRunResult = {
   metrics: Record<string, number>;
   paper_reported: string;
   synthetic?: boolean;
+  stand_in?: boolean;               // paper's model wasn't available; a comparable one was run
 };
 
 export type LlmCall = {

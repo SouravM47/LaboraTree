@@ -202,9 +202,12 @@ async def run_node(
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
 
-    component_id = body.component_id or node.get("component_id")
+    # Prefer the explicit fork, then the paper's mapped model, then a stand-in for unknown models
+    # (SVM, k-NN, neural nets, custom) so a node is never a dead end.
+    component_id = body.component_id or node.get("component_id") or node.get("suggested_component")
     if not component_id:
         raise HTTPException(status_code=400, detail="node has no runnable component; pass component_id to fork")
+    stand_in = not node.get("component_id") and not body.component_id
 
     dataset = await session.get(Dataset, body.dataset_id)
     if dataset is None or dataset.org_id != principal.org_id:
@@ -235,4 +238,5 @@ async def run_node(
         "metrics": result.outputs.get("metrics", {}),
         "paper_reported": card.get("results", ""),
         "synthetic": bool(dataset.synthetic),
+        "stand_in": stand_in,
     }

@@ -52,8 +52,9 @@ def classify_paper(text: str, complete_fn: CompleteFn) -> str:
 
 _EMPIRICAL_SYSTEM = (
     "You are a research explainer. Produce a Paper Card as STRICT JSON for a smart non-specialist: "
-    "plain language, no unexplained jargon. For every math formula add a beginner-friendly "
-    "explanation. For each variable, give a one-line description of what it actually is and a "
+    "plain language, no unexplained jargon. For every math formula be astute and concrete: define "
+    "every symbol, read the equation in plain words, and give the intuition with an analogy (never a "
+    "vague one-liner). For each variable, give a one-line description of what it actually is and a "
     "realistic example value. Be COMPLETE: when the paper lists attributes/features in a table or "
     "enumeration, extract every one of them — do not summarize, sample, or collapse the list."
 )
@@ -77,7 +78,14 @@ _EMPIRICAL_INSTRUCTION = (
     "brevity (papers often have 10-50 features).\n"
     "- target_variable: {name, description, example_value}\n"
     "- variants: array of strings (e.g. AR1/AR2 if any)\n"
-    "- math: array of {formula, explanation} (explanation is beginner-friendly)\n"
+    "- math: array of {formula, plain, symbols, intuition, example} where:\n"
+    "    * plain = read the equation in words — what it actually computes, step by step (astute and "
+    "concrete, never a vague one-liner),\n"
+    "    * symbols = define EVERY symbol/variable in the formula, one per line as 'symbol = meaning' "
+    "(e.g. 'θ = model parameters\\nλ = regularization strength'). Leave out nothing.\n"
+    "    * intuition = the underlying idea in 1-2 sentences with a simple analogy,\n"
+    "    * example = a tiny WORKED example that plugs in real numbers and shows the result, so any "
+    "person can follow it (e.g. 'if y=1 and ŷ=0.8, loss = -(1·log0.8) ≈ 0.22').\n"
     "- results: string (simple)\n"
     "- inference: string (what it means, simple)\n"
     "Use empty arrays/strings/objects when unknown. Do not invent numbers."
@@ -114,13 +122,37 @@ def _problem(ps: Any) -> dict:
     return {"one_liner": "", "plain": str(ps or "")}
 
 
+def _math(x: Any) -> dict:
+    if isinstance(x, dict):
+        symbols = x.get("symbols", "")
+        # symbols may come back as a list of {symbol, meaning} or strings — flatten to lines
+        if isinstance(symbols, list):
+            parts = []
+            for s in symbols:
+                if isinstance(s, dict):
+                    parts.append(f"{s.get('symbol', '')} = {s.get('meaning', s.get('definition', ''))}".strip(" ="))
+                else:
+                    parts.append(str(s))
+            symbols = "\n".join(p for p in parts if p)
+        return {
+            "formula": str(x.get("formula", "")),
+            # accept legacy `explanation` as the plain reading
+            "plain": str(x.get("plain", x.get("explanation", ""))),
+            "symbols": str(symbols),
+            "intuition": str(x.get("intuition", "")),
+            "example": str(x.get("example", "")),
+        }
+    return {"formula": str(x), "plain": "", "symbols": "", "intuition": "", "example": ""}
+
+
 def normalize_card(card: dict) -> dict:
     """Empirical card — stable shape, backward-compatible with legacy string fields."""
     out = dict(card)
     out["paper_type"] = "empirical"
     out["problem_statement"] = _problem(out.get("problem_statement"))
-    for f in ("data_sources", "preprocessing", "variants", "math"):
+    for f in ("data_sources", "preprocessing", "variants"):
         out.setdefault(f, [])
+    out["math"] = [_math(m) for m in out.get("math", [])]
     out.setdefault("data_sample", "")
     out.setdefault("results", "")
     out.setdefault("inference", "")

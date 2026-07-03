@@ -66,8 +66,28 @@ function Empirical({ paperId, card }: { paperId: string; card: EmpiricalCard }) 
           <div className="mt-3 space-y-4">
             {card.math.map((m, i) => (
               <div key={i} className="rounded-lg bg-bg p-3">
-                <code className="block text-sm text-forest">{m.formula}</code>
-                <p className="mt-1 text-sm text-muted">{m.explanation}</p>
+                <code className="block whitespace-pre-wrap text-sm text-forest">{m.formula}</code>
+                {(m.plain || m.explanation) && (
+                  <p className="mt-2 text-sm text-ink">{m.plain || m.explanation}</p>
+                )}
+                {m.symbols && (
+                  <div className="mt-2 text-xs text-muted">
+                    <span className="font-medium text-forest">What each symbol means:</span>
+                    <p className="mt-0.5 whitespace-pre-wrap">{m.symbols}</p>
+                  </div>
+                )}
+                {m.intuition && (
+                  <p className="mt-2 text-xs text-muted">
+                    <span className="font-medium text-forest">Intuition: </span>
+                    {m.intuition}
+                  </p>
+                )}
+                {m.example && (
+                  <p className="mt-1 whitespace-pre-wrap rounded bg-leaf/10 p-2 text-xs text-ink">
+                    <span className="font-medium text-forest">Example: </span>
+                    {m.example}
+                  </p>
+                )}
               </div>
             ))}
           </div>
