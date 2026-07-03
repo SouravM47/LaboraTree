@@ -12,18 +12,32 @@ from typing import Any
 
 CompleteFn = Callable[[str, str], str]
 
-MODEL_MAP = {
-    "logistic": "model.ml.logistic_regression",
-    "logit": "model.ml.logistic_regression",
-    "linear": "model.ml.linear_regression",
-    "ols": "model.ml.linear_regression",
-    "regression": "model.ml.linear_regression",
-}
+# Ordered longest/most-specific cues first so "logistic regression" doesn't match the generic
+# "regression" rule. Boosted-tree / forest / SVM classifiers map to the gradient-boosting component
+# (a faithful, registry-native stand-in) so common classification papers have something real to run.
+MODEL_MAP: list[tuple[str, str]] = [
+    ("logistic", "model.ml.logistic_regression"),
+    ("logit", "model.ml.logistic_regression"),
+    ("xgboost", "model.ml.gradient_boosting"),
+    ("xgb", "model.ml.gradient_boosting"),
+    ("lightgbm", "model.ml.gradient_boosting"),
+    ("catboost", "model.ml.gradient_boosting"),
+    ("gradient boost", "model.ml.gradient_boosting"),
+    ("gradient-boost", "model.ml.gradient_boosting"),
+    ("gbm", "model.ml.gradient_boosting"),
+    ("boost", "model.ml.gradient_boosting"),
+    ("random forest", "model.ml.gradient_boosting"),
+    ("decision tree", "model.ml.gradient_boosting"),
+    ("gbdt", "model.ml.gradient_boosting"),
+    ("linear", "model.ml.linear_regression"),
+    ("ols", "model.ml.linear_regression"),
+    ("regression", "model.ml.linear_regression"),
+]
 
 
 def _model_component(model_name: str) -> str | None:
     low = model_name.lower()
-    for key, cid in MODEL_MAP.items():
+    for key, cid in MODEL_MAP:
         if key in low:
             return cid
     return None

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from ..core.deps import PrincipalDep, SessionDep
+from ..core.deps import Principal, PrincipalDep, SessionDep, require_role
+from ..tenancy.models import Role
 from ..core.llm.context import use_llm_context
 from ..core.storage import get_blob_store
 from ..labs.paper import llm as paper_llm
@@ -115,6 +116,18 @@ async def list_papers(
 @router.get("/papers/{paper_id}", response_model=PaperOut)
 async def get_paper(paper_id: uuid.UUID, principal: PrincipalDep, session: SessionDep) -> Paper:
     return await _require_paper(session, principal, paper_id)
+
+
+@router.delete("/papers/{paper_id}", status_code=204)
+async def delete_paper(
+    paper_id: uuid.UUID,
+    session: SessionDep,
+    principal: Annotated[Principal, Depends(require_role(Role.ANALYST))],
+) -> None:
+    """Delete a paper and its chunks + experiments (DB-level ON DELETE CASCADE). Analyst+ only."""
+    paper = await _require_paper(session, principal, paper_id)
+    await session.delete(paper)
+    await session.commit()
 
 
 async def _paper_text(session, paper: Paper) -> str:

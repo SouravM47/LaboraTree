@@ -67,3 +67,18 @@ async def get_project(
     if project is None or project.org_id != principal.org_id:
         raise HTTPException(status_code=404, detail="project not found")
     return project
+
+
+@router.delete("/{project_id}", status_code=204)
+async def delete_project(
+    project_id: uuid.UUID,
+    session: SessionDep,
+    principal: Annotated[Principal, Depends(require_role(Role.ADMIN))],
+) -> None:
+    """Delete a project and everything under it (datasets, runs, papers, experiments, evidence)
+    via DB-level ON DELETE CASCADE. Admin/Owner only."""
+    project = await session.get(Project, project_id)
+    if project is None or project.org_id != principal.org_id:
+        raise HTTPException(status_code=404, detail="project not found")
+    await session.delete(project)
+    await session.commit()

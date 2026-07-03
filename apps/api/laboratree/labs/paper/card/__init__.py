@@ -14,7 +14,7 @@ from typing import Any
 
 CompleteFn = Callable[[str, str], str]
 
-MAX_CHARS = 14000
+MAX_CHARS = 26000
 
 
 def _parse_json(raw: str) -> dict:
@@ -54,18 +54,27 @@ _EMPIRICAL_SYSTEM = (
     "You are a research explainer. Produce a Paper Card as STRICT JSON for a smart non-specialist: "
     "plain language, no unexplained jargon. For every math formula add a beginner-friendly "
     "explanation. For each variable, give a one-line description of what it actually is and a "
-    "realistic example value."
+    "realistic example value. Be COMPLETE: when the paper lists attributes/features in a table or "
+    "enumeration, extract every one of them — do not summarize, sample, or collapse the list."
 )
 
 _EMPIRICAL_INSTRUCTION = (
     "Return ONLY a JSON object with keys:\n"
     "- paper_type: 'empirical'\n"
     "- problem_statement: {one_liner (<=20 words), plain (2-3 simple sentences)}\n"
-    "- models_used: array of {name, summary}\n"
+    "- models_used: array of {name, summary, universal, use_case, example} where:\n"
+    "    * summary = what THIS paper does with the model (1-2 sentences),\n"
+    "    * universal = a model-agnostic plain explanation of what this kind of model is and how it "
+    "works in general (2-3 sentences, no reference to this paper),\n"
+    "    * use_case = a common real-world practical use case for this model type,\n"
+    "    * example = a concrete worked mini-example a beginner can picture.\n"
     "- data_sources: array of strings\n"
     "- preprocessing: array of short strings (the preprocessing funnel)\n"
     "- data_sample: string (size/shape/description)\n"
-    "- independent_variables: array of {name, description, example_value}\n"
+    "- independent_variables: array of {name, description, example_value} — list EVERY feature / "
+    "attribute / predictor the paper uses. If the paper has an attribute or feature table, include "
+    "ONE entry per row of that table. Do NOT truncate or summarize; completeness matters more than "
+    "brevity (papers often have 10-50 features).\n"
     "- target_variable: {name, description, example_value}\n"
     "- variants: array of strings (e.g. AR1/AR2 if any)\n"
     "- math: array of {formula, explanation} (explanation is beginner-friendly)\n"
@@ -89,8 +98,14 @@ def _var(v: Any) -> dict:
 
 def _model(m: Any) -> dict:
     if isinstance(m, dict):
-        return {"name": str(m.get("name", "")), "summary": str(m.get("summary", ""))}
-    return {"name": str(m), "summary": ""}
+        return {
+            "name": str(m.get("name", "")),
+            "summary": str(m.get("summary", "")),
+            "universal": str(m.get("universal", "")),
+            "use_case": str(m.get("use_case", "")),
+            "example": str(m.get("example", "")),
+        }
+    return {"name": str(m), "summary": "", "universal": "", "use_case": "", "example": ""}
 
 
 def _problem(ps: Any) -> dict:

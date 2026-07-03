@@ -32,7 +32,21 @@ export default function Dashboard() {
     }
   }
 
+  async function remove(p: Project) {
+    if (!confirm(`Delete project “${p.name}” and everything in it (papers, datasets, runs)? This cannot be undone.`))
+      return;
+    setError(null);
+    try {
+      await Api.deleteProject(p.id);
+      setProjects((prev) => prev.filter((x) => x.id !== p.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "delete failed");
+    }
+  }
+
   if (loading || !user) return <p className="text-muted">Loading…</p>;
+
+  const canDelete = user.role === "owner" || user.role === "admin";
 
   return (
     <div>
@@ -60,19 +74,33 @@ export default function Dashboard() {
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {projects.map((p) => (
-          <Link
+          <div
             key={p.id}
-            href={`/projects/${p.id}`}
-            className="rounded-2xl border border-line bg-white p-5 transition hover:border-leaf"
+            className="group relative rounded-2xl border border-line bg-white p-5 transition hover:border-leaf"
           >
-            <h3 className="font-medium text-forest">{p.name}</h3>
-            <p className="mt-1 line-clamp-2 text-sm text-muted">
-              {p.description || "Open workspace →"}
-            </p>
-            <p className="mt-3 text-xs text-muted">
-              {new Date(p.created_at).toLocaleDateString()}
-            </p>
-          </Link>
+            <Link href={`/projects/${p.id}`} className="block">
+              <h3 className="pr-8 font-medium text-forest">{p.name}</h3>
+              <p className="mt-1 line-clamp-2 text-sm text-muted">
+                {p.description || "Open workspace →"}
+              </p>
+              <p className="mt-3 text-xs text-muted">
+                {new Date(p.created_at).toLocaleDateString()}
+              </p>
+            </Link>
+            {canDelete && (
+              <button
+                onClick={() => remove(p)}
+                title="Delete project"
+                aria-label={`Delete ${p.name}`}
+                className="absolute right-3 top-3 rounded-lg p-1.5 text-muted opacity-0 transition hover:bg-red-50 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                  <line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+              </button>
+            )}
+          </div>
         ))}
         {projects.length === 0 && (
           <p className="text-muted">No projects yet — create one to get started.</p>

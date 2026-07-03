@@ -100,7 +100,37 @@ function VariablePop({ v, tone }: { v: CardVariable; tone?: "forest" }) {
 }
 
 function ModelPop({ m }: { m: CardModel }) {
-  return <Pop label={m.name} body={<p className="text-ink">{m.summary || "No summary."}</p>} />;
+  return (
+    <Pop
+      label={m.name}
+      body={
+        <div className="space-y-2">
+          {m.universal && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-leaf">What it is</p>
+              <p className="text-ink">{m.universal}</p>
+            </div>
+          )}
+          <div>
+            <p className="text-xs uppercase tracking-wide text-leaf">In this paper</p>
+            <p className="text-ink">{m.summary || "No summary."}</p>
+          </div>
+          {m.use_case && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-leaf">Practical use case</p>
+              <p className="text-ink">{m.use_case}</p>
+            </div>
+          )}
+          {m.example && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-leaf">Example</p>
+              <p className="text-ink">{m.example}</p>
+            </div>
+          )}
+        </div>
+      }
+    />
+  );
 }
 
 /* ---------------- conceptual ---------------- */

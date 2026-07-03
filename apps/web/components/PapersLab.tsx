@@ -31,6 +31,18 @@ export default function PapersLab({ projectId }: { projectId: string }) {
     }
   }
 
+  async function remove(p: Paper) {
+    if (!confirm(`Delete paper “${p.title}”? This removes its card, chunks and experiments.`)) return;
+    setError(null);
+    try {
+      await Api.deletePaper(p.id);
+      setPapers((prev) => prev.filter((x) => x.id !== p.id));
+      if (selected?.id === p.id) setSelected(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "delete failed");
+    }
+  }
+
   if (selected) {
     return (
       <PaperDetail
