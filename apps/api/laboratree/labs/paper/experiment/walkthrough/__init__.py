@@ -12,18 +12,40 @@ from typing import Any
 
 CompleteFn = Callable[[str, str], str]
 
-MODEL_MAP = {
-    "logistic": "model.ml.logistic_regression",
-    "logit": "model.ml.logistic_regression",
-    "linear": "model.ml.linear_regression",
-    "ols": "model.ml.linear_regression",
-    "regression": "model.ml.linear_regression",
-}
+# Ordered longest/most-specific cues first so "logistic regression" doesn't match the generic
+# "regression" rule. Boosted-tree / forest / SVM classifiers map to the gradient-boosting component
+# (a faithful, registry-native stand-in) so common classification papers have something real to run.
+MODEL_MAP: list[tuple[str, str]] = [
+    ("logistic", "model.ml.logistic_regression"),
+    ("probit", "model.econometrics.probit"),
+    ("logit", "model.ml.logistic_regression"),
+    ("arima", "model.econometrics.arima"),
+    ("sarima", "model.econometrics.arima"),
+    ("xgboost", "model.ml.gradient_boosting"),
+    ("xgb", "model.ml.gradient_boosting"),
+    ("lightgbm", "model.ml.gradient_boosting"),
+    ("catboost", "model.ml.gradient_boosting"),
+    ("gradient boost", "model.ml.gradient_boosting"),
+    ("gradient-boost", "model.ml.gradient_boosting"),
+    ("gbm", "model.ml.gradient_boosting"),
+    ("boost", "model.ml.gradient_boosting"),
+    ("random forest", "model.ml.gradient_boosting"),
+    ("decision tree", "model.ml.gradient_boosting"),
+    ("gbdt", "model.ml.gradient_boosting"),
+    ("linear", "model.ml.linear_regression"),
+    ("ols", "model.ml.linear_regression"),
+    ("regression", "model.ml.linear_regression"),
+]
+
+
+# When a paper's model isn't in the registry (SVM, k-NN, a neural net, a custom model…), the user
+# can still run a comparable, auto-task-detecting stand-in — flagged so the UI shows a caveat.
+DEFAULT_STANDIN = "model.ml.gradient_boosting"
 
 
 def _model_component(model_name: str) -> str | None:
     low = model_name.lower()
-    for key, cid in MODEL_MAP.items():
+    for key, cid in MODEL_MAP:
         if key in low:
             return cid
     return None
@@ -60,8 +82,11 @@ def default_walkthrough(card: dict[str, Any]) -> list[dict[str, Any]]:
     for model in card.get("models_used") or []:
         mname = _name(model)
         detail = model.get("summary", "") if isinstance(model, dict) else "Fit and evaluate"
+        cid = _model_component(mname)
         steps.append(_node(i, "model", mname, detail or "Fit and evaluate",
-                           component_id=_model_component(mname),
+                           component_id=cid,
+                           available=cid is not None,
+                           suggested_component=cid or DEFAULT_STANDIN,
                            params={"target": target} if target else {}))
         i += 1
 
@@ -95,7 +120,10 @@ def build_walkthrough(card: dict[str, Any], complete_fn: CompleteFn | None = Non
             kind = str(item.get("kind", "data"))
             node = _node(idx, kind, str(item.get("title", "")), str(item.get("detail", "")))
             if kind == "model":
-                node["component_id"] = _model_component(node["title"])
+                cid = _model_component(node["title"])
+                node["component_id"] = cid
+                node["available"] = cid is not None
+                node["suggested_component"] = cid or DEFAULT_STANDIN
                 node["params"] = {"target": _name(card.get("target_variable"))}
             steps.append(node)
         return steps or base

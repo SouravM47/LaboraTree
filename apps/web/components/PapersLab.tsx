@@ -6,12 +6,15 @@ import FileDropzone from "@/components/FileDropzone";
 import PaperCard from "@/components/PaperCard";
 import ChatPanel from "@/components/ChatPanel";
 import ExperimentCanvas from "@/components/ExperimentCanvas";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 export default function PapersLab({ projectId }: { projectId: string }) {
   const [papers, setPapers] = useState<Paper[]>([]);
   const [selected, setSelected] = useState<Paper | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Paper | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     Api.listPapers(projectId).then(setPapers).catch(() => setPapers([]));
@@ -28,6 +31,22 @@ export default function PapersLab({ projectId }: { projectId: string }) {
       setError(e instanceof Error ? e.message : "upload failed");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await Api.deletePaper(pendingDelete.id);
+      setPapers((prev) => prev.filter((x) => x.id !== pendingDelete.id));
+      if (selected?.id === pendingDelete.id) setSelected(null);
+      setPendingDelete(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "delete failed");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -67,15 +86,26 @@ export default function PapersLab({ projectId }: { projectId: string }) {
           <h3 className="font-display text-lg text-forest">Papers</h3>
           <ul className="mt-3 divide-y divide-line">
             {papers.map((p) => (
-              <li key={p.id}>
+              <li key={p.id} className="flex items-center gap-2">
                 <button
                   onClick={() => setSelected(p)}
-                  className="flex w-full items-center justify-between py-3 text-left hover:text-forest"
+                  className="flex flex-1 items-center justify-between py-3 text-left hover:text-forest"
                 >
                   <span className="text-ink">{p.title}</span>
                   <span className="rounded-full bg-sprout/30 px-2 py-0.5 text-xs text-forest">
                     {p.status} · {p.n_chunks} chunks
                   </span>
+                </button>
+                <button
+                  onClick={() => setPendingDelete(p)}
+                  title="Delete paper"
+                  aria-label={`Delete ${p.title}`}
+                  className="rounded-lg p-1.5 text-muted transition hover:bg-red-50 hover:text-red-600"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                    <line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" />
+                  </svg>
                 </button>
               </li>
             ))}

@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..agents.run_executor import RunFailed, execute_component
 from ..core.deps import PrincipalDep, SessionDep
@@ -105,12 +106,18 @@ async def demo_data(
     await session.flush()
 
     report = dict(exp.fetch_report)
-    report.setdefault("fetched", []).append({
-        "name": "demo (synthetic)", "filename": "demo.csv", "dataset_id": str(ds.id),
-        "resolver": "demo_llm", "source": "llm", "n_rows": int(len(df)),
-        "n_cols": int(df.shape[1]), "synthetic": True,
-    })
+    # Build a NEW list (not append to the shared one) so SQLAlchemy sees a real change on the
+    # JSONB column — a shallow-copied nested list would be mutated in place and go unpersisted.
+    report["fetched"] = [
+        *(report.get("fetched") or []),
+        {
+            "name": "demo (synthetic)", "filename": "demo.csv", "dataset_id": str(ds.id),
+            "resolver": "demo_llm", "source": "llm", "n_rows": int(len(df)),
+            "n_cols": int(df.shape[1]), "synthetic": True,
+        },
+    ]
     exp.fetch_report = report
+    flag_modified(exp, "fetch_report")
     exp.status = ExperimentStatus.READY
     await session.commit()
     await session.refresh(exp)
@@ -152,13 +159,15 @@ async def upload_experiment_data(
     await session.flush()
 
     report = dict(exp.fetch_report)
-    report.setdefault("fetched", []).append(
+    report["fetched"] = [
+        *(report.get("fetched") or []),
         {"name": name, "filename": file.filename, "dataset_id": str(ds.id),
-         "resolver": "manual_upload", "source": "human", "n_rows": n_rows, "n_cols": n_cols}
-    )
+         "resolver": "manual_upload", "source": "human", "n_rows": n_rows, "n_cols": n_cols},
+    ]
     remaining = [u for u in report.get("unresolved", []) if u.get("name", "").lower() != name.lower()]
     report["unresolved"] = remaining
-    exp.fetch_report = report  # reassign so JSONB change is detected
+    exp.fetch_report = report  # reassign + flag so the JSONB change is detected
+    flag_modified(exp, "fetch_report")
 
     if not remaining:
         exp.status = ExperimentStatus.READY
@@ -193,9 +202,12 @@ async def run_node(
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
 
-    component_id = body.component_id or node.get("component_id")
+    # Prefer the explicit fork, then the paper's mapped model, then a stand-in for unknown models
+    # (SVM, k-NN, neural nets, custom) so a node is never a dead end.
+    component_id = body.component_id or node.get("component_id") or node.get("suggested_component")
     if not component_id:
         raise HTTPException(status_code=400, detail="node has no runnable component; pass component_id to fork")
+    stand_in = not node.get("component_id") and not body.component_id
 
     dataset = await session.get(Dataset, body.dataset_id)
     if dataset is None or dataset.org_id != principal.org_id:
@@ -226,4 +238,5 @@ async def run_node(
         "metrics": result.outputs.get("metrics", {}),
         "paper_reported": card.get("results", ""),
         "synthetic": bool(dataset.synthetic),
+        "stand_in": stand_in,
     }

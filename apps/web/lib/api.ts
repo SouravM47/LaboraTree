@@ -74,6 +74,9 @@ export function apiPatch<T>(path: string, body?: unknown): Promise<T> {
 export function apiUpload<T>(path: string, form: FormData): Promise<T> {
   return request<T>(path, { method: "POST", headers: authHeaders(), body: form });
 }
+export function apiDelete(path: string): Promise<void> {
+  return request<void>(path, { method: "DELETE", headers: authHeaders() });
+}
 
 export async function downloadBlob(path: string, filename: string): Promise<void> {
   const res = await fetch(`${API_URL}${path}`, { headers: authHeaders() });
@@ -113,10 +116,23 @@ export type SignalSummary = {
   };
 };
 
-export type MathItem = { formula: string; explanation: string };
+export type MathItem = {
+  formula: string;
+  plain?: string;
+  symbols?: string;
+  intuition?: string;
+  example?: string;
+  explanation?: string; // legacy
+};
 export type ProblemStatement = { one_liner: string; plain: string };
 export type CardVariable = { name: string; description: string; example_value: string };
-export type CardModel = { name: string; summary: string };
+export type CardModel = {
+  name: string;
+  summary: string;
+  universal?: string;
+  use_case?: string;
+  example?: string;
+};
 export type EmpiricalCard = {
   paper_type: "empirical";
   problem_statement: ProblemStatement;
@@ -161,6 +177,8 @@ export type WalkNode = {
   title: string;
   detail?: string;
   component_id?: string | null;
+  available?: boolean;              // false when the paper's model isn't a registered component
+  suggested_component?: string;     // comparable stand-in to run instead
   params?: Record<string, unknown>;
 };
 export type FetchedDataset = {
@@ -195,6 +213,7 @@ export type NodeRunResult = {
   metrics: Record<string, number>;
   paper_reported: string;
   synthetic?: boolean;
+  stand_in?: boolean;               // paper's model wasn't available; a comparable one was run
 };
 
 export type LlmCall = {
@@ -302,6 +321,7 @@ export const Api = {
   createProject: (name: string, description = "") =>
     apiPost<Project>("/api/projects", { name, description }),
   getProject: (id: string) => apiGet<Project>(`/api/projects/${id}`),
+  deleteProject: (id: string) => apiDelete(`/api/projects/${id}`),
 
   consolidate: (projectId: string, files: File[]) => {
     const fd = new FormData();
@@ -316,6 +336,7 @@ export const Api = {
     return apiUpload<Paper>(`/api/projects/${projectId}/papers`, fd);
   },
   getPaper: (id: string) => apiGet<Paper>(`/api/papers/${id}`),
+  deletePaper: (id: string) => apiDelete(`/api/papers/${id}`),
   makeCard: (id: string, regenerate = false) =>
     apiPost<Paper>(`/api/papers/${id}/card?regenerate=${regenerate}`),
   simplify: (id: string, body: { field?: string; text?: string; level: number }) =>

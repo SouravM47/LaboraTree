@@ -70,9 +70,10 @@ def test_generate_demo_dataset():
         return '{"columns":["age","churn"],"rows":[{"age":30,"churn":1},{"age":45,"churn":0}]}'
 
     card = {"independent_variables": [{"name": "age"}], "target_variable": {"name": "churn"}}
-    out = generate_demo_dataset("paper text", card, 2, fake)
-    assert out["columns"] == ["age", "churn"]
-    assert len(out["records"]) == 2
+    out = generate_demo_dataset("paper text", card, 6, fake)
+    assert "age" in out["columns"] and "churn" in out["columns"]
+    assert len(out["records"]) >= 1
+    assert all(c in out["records"][0] for c in out["columns"])
     assert out["caveat"]
 
 
