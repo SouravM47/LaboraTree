@@ -17,6 +17,7 @@ from .api import (
     gates,
     health,
     ideation,
+    observability,
     orgs,
     papers,
     pipeline,
@@ -75,6 +76,7 @@ app.include_router(ideation.router)
 app.include_router(reports.router)
 app.include_router(collection.router)
 app.include_router(pipeline.router)
+app.include_router(observability.router)
 app.include_router(components.router)
 
 

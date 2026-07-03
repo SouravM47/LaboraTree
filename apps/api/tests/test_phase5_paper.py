@@ -29,15 +29,15 @@ def test_generate_card_parses_json_and_normalizes():
         return '```json\n{"problem_statement": "Predicts churn.", "models_used": ["Logit"]}\n```'
 
     card = generate_card("some paper text", complete_fn=fake)
-    assert card["problem_statement"] == "Predicts churn."
-    assert card["models_used"] == ["Logit"]
+    assert card["problem_statement"]["plain"] == "Predicts churn."
+    assert card["models_used"][0]["name"] == "Logit"
     # normalized: missing fields present
     assert "math" in card and isinstance(card["math"], list)
 
 
 def test_normalize_card_fills_defaults():
     card = normalize_card({"problem_statement": "x"})
-    assert card["target_variable"] == ""
+    assert card["target_variable"]["name"] == ""
     assert card["data_sources"] == []
 
 
@@ -113,7 +113,7 @@ def test_paper_study_flow(monkeypatch):
 
         # Paper Card
         card = client.post(f"/api/papers/{pid}/card", headers=h).json()
-        assert card["card"]["problem_statement"] == "Predict churn."
+        assert card["card"]["problem_statement"]["plain"] == "Predict churn."
         assert card["status"] == "carded"
 
         # explain simpler

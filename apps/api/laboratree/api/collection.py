@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..core.deps import PrincipalDep, SessionDep
+from ..core.llm.context import use_llm_context
 from ..labs.collection import llm as collection_llm
 from ..labs.collection.survey import (
     design_questionnaire,
@@ -56,8 +57,9 @@ async def questionnaire(
     project_id: uuid.UUID, body: QuestionnaireIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
     await _require_project(session, principal, project_id)
-    return {"questions": design_questionnaire(
-        body.goal, body.audience, body.n, collection_llm.default_complete)}
+    with use_llm_context("collection", "questionnaire", project_id=project_id, org_id=principal.org_id):
+        return {"questions": design_questionnaire(
+            body.goal, body.audience, body.n, collection_llm.default_complete)}
 
 
 @router.post("/projects/{project_id}/collection/bias-check")
@@ -67,7 +69,8 @@ async def bias_check(
     await _require_project(session, principal, project_id)
     if not body.questions:
         raise HTTPException(status_code=400, detail="no questions provided")
-    return {"findings": detect_bias(body.questions, collection_llm.default_complete)}
+    with use_llm_context("collection", "bias_check", project_id=project_id, org_id=principal.org_id):
+        return {"findings": detect_bias(body.questions, collection_llm.default_complete)}
 
 
 @router.post("/projects/{project_id}/collection/sample-size")
@@ -85,4 +88,5 @@ async def pilot(
     await _require_project(session, principal, project_id)
     if not body.questions:
         raise HTTPException(status_code=400, detail="no questions provided")
-    return synthetic_pilot(body.questions, body.persona, body.n, collection_llm.default_complete)
+    with use_llm_context("collection", "pilot", project_id=project_id, org_id=principal.org_id):
+        return synthetic_pilot(body.questions, body.persona, body.n, collection_llm.default_complete)

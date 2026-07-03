@@ -87,8 +87,7 @@ export default function PapersLab({ projectId }: { projectId: string }) {
 }
 
 function hasCard(card: Paper["card"]): card is PaperCardData {
-  return !!card && typeof (card as PaperCardData).problem_statement === "string" &&
-    (card as PaperCardData).problem_statement.length > 0;
+  return !!card && typeof (card as { paper_type?: string }).paper_type === "string";
 }
 
 function PaperDetail({

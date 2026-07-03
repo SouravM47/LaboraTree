@@ -29,6 +29,11 @@ def _model_component(model_name: str) -> str | None:
     return None
 
 
+def _name(x: Any) -> str:
+    """Coerce a card field (may be a string or a {name,...} object) to its name."""
+    return str(x.get("name", "")) if isinstance(x, dict) else str(x or "")
+
+
 def _node(i: int, kind: str, title: str, detail: str = "", **extra: Any) -> dict[str, Any]:
     return {"id": f"n{i}", "kind": kind, "title": title, "detail": detail, "source": "paper", **extra}
 
@@ -46,16 +51,18 @@ def default_walkthrough(card: dict[str, Any]) -> list[dict[str, Any]]:
         steps.append(_node(i, "preprocess", pp))
         i += 1
 
-    ivs = card.get("independent_variables") or []
-    target = card.get("target_variable") or ""
+    ivs = [_name(v) for v in (card.get("independent_variables") or [])]
+    target = _name(card.get("target_variable"))
     steps.append(_node(i, "eda", "Explore relationships",
                        f"Features {', '.join(ivs) if ivs else '—'} vs target '{target}'"))
     i += 1
 
     for model in card.get("models_used") or []:
-        cid = _model_component(model)
-        steps.append(_node(i, "model", model, "Fit and evaluate",
-                           component_id=cid, params={"target": target} if target else {}))
+        mname = _name(model)
+        detail = model.get("summary", "") if isinstance(model, dict) else "Fit and evaluate"
+        steps.append(_node(i, "model", mname, detail or "Fit and evaluate",
+                           component_id=_model_component(mname),
+                           params={"target": target} if target else {}))
         i += 1
 
     steps.append(_node(i, "result", "Reported results", str(card.get("results") or "")))
@@ -89,7 +96,7 @@ def build_walkthrough(card: dict[str, Any], complete_fn: CompleteFn | None = Non
             node = _node(idx, kind, str(item.get("title", "")), str(item.get("detail", "")))
             if kind == "model":
                 node["component_id"] = _model_component(node["title"])
-                node["params"] = {"target": card.get("target_variable") or ""}
+                node["params"] = {"target": _name(card.get("target_variable"))}
             steps.append(node)
         return steps or base
     except Exception:

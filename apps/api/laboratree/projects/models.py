@@ -9,7 +9,7 @@ from __future__ import annotations
 import enum
 import uuid
 
-from sqlalchemy import Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -73,6 +73,7 @@ class Dataset(PkMixin, OrgScopedMixin, TimestampMixin, Base):
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
     )
+    synthetic: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="datasets")
 
@@ -178,3 +179,27 @@ class IdeationSession(PkMixin, OrgScopedMixin, TimestampMixin, Base):
     )
     hypotheses: Mapped[list] = mapped_column(JSONB, default=list)  # ranked list of hypothesis dicts
     meta_review: Mapped[str] = mapped_column(Text, default="")
+
+
+class LLMCall(PkMixin, TimestampMixin, Base):
+    """Observability record for a single LLM call (loose logging — nullable scope, no FKs)."""
+
+    __tablename__ = "llm_calls"
+
+    org_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True, nullable=True)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), index=True, nullable=True
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lab: Mapped[str] = mapped_column(String(60), default="")
+    operation: Mapped[str] = mapped_column(String(60), default="")
+    provider: Mapped[str] = mapped_column(String(40), default="")
+    model: Mapped[str] = mapped_column(String(120), default="")
+    role: Mapped[str] = mapped_column(String(40), default="")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    latency_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="ok")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)

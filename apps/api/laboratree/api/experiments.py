@@ -12,10 +12,12 @@ from sqlalchemy import select
 
 from ..agents.run_executor import RunFailed, execute_component
 from ..core.deps import PrincipalDep, SessionDep
+from ..core.llm.context import use_llm_context
 from ..core.repro import dataframe_hash
 from ..core.storage import get_blob_store
 from ..labs.paper import llm as paper_llm
-from ..labs.paper.experiment.service import create_experiment, load_dataset_df
+from ..labs.paper.experiment.demo import generate_demo_dataset
+from ..labs.paper.experiment.service import _paper_text, create_experiment, load_dataset_df
 from ..papers.models import Experiment, ExperimentStatus, Paper
 from ..projects.models import Dataset, GateStatus, GateTask
 
@@ -55,16 +57,64 @@ async def start_experiment(
     if not paper.card:
         raise HTTPException(status_code=409, detail="generate the Paper Card first")
 
-    result = await create_experiment(
-        session,
-        org_id=principal.org_id,
-        project_id=paper.project_id,
-        paper=paper,
-        complete_fn=paper_llm.default_complete,
-    )
+    with use_llm_context("paper", "experiment_fetch", project_id=paper.project_id,
+                         org_id=principal.org_id):
+        result = await create_experiment(
+            session,
+            org_id=principal.org_id,
+            project_id=paper.project_id,
+            paper=paper,
+            complete_fn=paper_llm.default_complete,
+        )
     detail = _detail(result.experiment)
     detail["gate_id"] = str(result.gate.id) if result.gate else None
     return detail
+
+
+@router.post("/experiments/{experiment_id}/demo-data", status_code=201)
+async def demo_data(
+    experiment_id: uuid.UUID,
+    principal: PrincipalDep,
+    session: SessionDep,
+    n_rows: int = 60,
+) -> dict[str, Any]:
+    """Synthesize a realistic demo dataset from the paper's variables so the user can always proceed."""
+    exp = await _require_experiment(session, principal, experiment_id)
+    paper = await session.get(Paper, exp.paper_id)
+    if paper is None or paper.org_id != principal.org_id:
+        raise HTTPException(status_code=404, detail="paper not found")
+
+    import pandas as pd
+
+    text = await _paper_text(session, paper)
+    with use_llm_context("paper", "demo_data", project_id=exp.project_id, org_id=principal.org_id):
+        demo = generate_demo_dataset(text, paper.card or {}, n_rows, paper_llm.default_complete)
+    df = pd.DataFrame(demo["records"], columns=demo["columns"] or None)
+    if df.empty:
+        raise HTTPException(status_code=400, detail="demo-data generation produced no rows")
+
+    key = f"experiments/{exp.project_id}/{uuid.uuid4()}/demo.csv"
+    data = df.to_csv(index=False).encode()
+    get_blob_store().put(key, data)
+    ds = Dataset(
+        org_id=principal.org_id, project_id=exp.project_id, name="demo (synthetic)",
+        storage_key=key, content_hash=dataframe_hash(df),
+        n_rows=int(len(df)), n_cols=int(df.shape[1]), synthetic=True,
+    )
+    session.add(ds)
+    await session.flush()
+
+    report = dict(exp.fetch_report)
+    report.setdefault("fetched", []).append({
+        "name": "demo (synthetic)", "filename": "demo.csv", "dataset_id": str(ds.id),
+        "resolver": "demo_llm", "source": "llm", "n_rows": int(len(df)),
+        "n_cols": int(df.shape[1]), "synthetic": True,
+    })
+    exp.fetch_report = report
+    exp.status = ExperimentStatus.READY
+    await session.commit()
+    await session.refresh(exp)
+    return {**_detail(exp), "caveat": demo["caveat"]}
 
 
 @router.get("/experiments/{experiment_id}")
@@ -175,4 +225,5 @@ async def run_node(
         "forked": bool(body.component_id and body.component_id != node.get("component_id")),
         "metrics": result.outputs.get("metrics", {}),
         "paper_reported": card.get("results", ""),
+        "synthetic": bool(dataset.synthetic),
     }

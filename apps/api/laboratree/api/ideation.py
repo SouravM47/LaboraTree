@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from ..core.deps import PrincipalDep, SessionDep
+from ..core.llm.context import use_llm_context
 from ..labs.ideation import llm as ideation_llm
 from ..labs.ideation.coscientist import run_ideation
 from ..projects.models import IdeationSession, IdeationStatus, Project
@@ -47,9 +48,10 @@ async def run(
     project_id: uuid.UUID, body: IdeationIn, principal: PrincipalDep, session: SessionDep
 ) -> IdeationSession:
     await _require_project(session, principal, project_id)
-    result = run_ideation(
-        body.goal, ideation_llm.default_complete, n=body.n, evolve_n=body.evolve_n
-    )
+    with use_llm_context("ideation", "coscientist", project_id=project_id, org_id=principal.org_id):
+        result = run_ideation(
+            body.goal, ideation_llm.default_complete, n=body.n, evolve_n=body.evolve_n
+        )
     record = IdeationSession(
         org_id=principal.org_id,
         project_id=project_id,

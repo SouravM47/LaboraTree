@@ -9,6 +9,7 @@ from .projects.models import (  # noqa: F401
     GateTask,
     IdeationSession,
     IdeationStatus,
+    LLMCall,
     Project,
     Run,
     RunStatus,
@@ -43,4 +44,5 @@ __all__ = [
     "ExperimentStatus",
     "IdeationSession",
     "IdeationStatus",
+    "LLMCall",
 ]
