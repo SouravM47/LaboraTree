@@ -98,8 +98,6 @@ class DirectUrlResolver:
     def __init__(self, timeout: float = 20.0) -> None:
         self.timeout = timeout
 
-    _MAX_BYTES = 25 * 1024 * 1024
-
     def try_fetch(self, ref: DatasetRef) -> FetchResult | None:
         url = ref.url
         if not url or not url.lower().startswith("http"):
@@ -107,24 +105,11 @@ class DirectUrlResolver:
         if not any(url.lower().split("?")[0].endswith(ext) for ext in _DATA_EXT):
             return None
 
-        from laboratree.core.net import is_public_http_url
+        from laboratree.core.net import safe_fetch
 
-        # URL comes from paper text / LLM extraction — untrusted. Guard SSRF + cap the download.
-        if not is_public_http_url(url):
-            return None
-        try:
-            import httpx
-
-            with httpx.stream("GET", url, timeout=self.timeout, follow_redirects=True) as resp:
-                resp.raise_for_status()
-                chunks, total = [], 0
-                for chunk in resp.iter_bytes():
-                    total += len(chunk)
-                    if total > self._MAX_BYTES:
-                        return None
-                    chunks.append(chunk)
-            content = b"".join(chunks)
-        except Exception:
+        # URL comes from paper text / LLM extraction — untrusted. SSRF-safe (per-hop) + size-capped.
+        content = safe_fetch(url, timeout=self.timeout)
+        if content is None:
             return None
         filename = url.split("?")[0].rstrip("/").split("/")[-1] or f"{_norm(ref.name)}.csv"
         return FetchResult(ref, content, filename, self.name, url)

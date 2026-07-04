@@ -86,28 +86,10 @@ class AutoExperimentIn(BaseModel):
 
 
 def _download_bytes(url: str) -> bytes | None:
-    """One polite, size-capped GET for the master-dataset builder. SSRF-guarded; never raises."""
-    import httpx
+    """Size-capped, SSRF-safe GET for the master-dataset / paper-PDF builders (redirects re-validated)."""
+    from ..core.net import safe_fetch
 
-    from ..core.net import is_public_http_url
-
-    if not is_public_http_url(url):
-        return None
-    try:
-        with httpx.stream("GET", url, timeout=20.0, follow_redirects=True,
-                          headers={"User-Agent": "Laboratree/0.1 (dataset builder)"}) as resp:
-            if resp.status_code != 200:
-                return None
-            cap = 25 * 1024 * 1024
-            chunks, total = [], 0
-            for chunk in resp.iter_bytes():
-                total += len(chunk)
-                if total > cap:
-                    return None
-                chunks.append(chunk)
-            return b"".join(chunks)
-    except Exception:
-        return None
+    return safe_fetch(url, user_agent="Laboratree/0.1 (dataset builder)")
 
 
 def _step_summary(kind: str, outputs: dict[str, Any] | None) -> dict[str, Any]:

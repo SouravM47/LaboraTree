@@ -26,3 +26,35 @@ def test_blocks_non_http_schemes_and_junk():
 def test_allows_public_addresses():
     assert is_public_http_url("http://8.8.8.8/") is True          # public literal IP (no DNS needed)
     assert is_public_http_url("https://1.1.1.1/data.csv") is True
+
+
+def test_safe_fetch_revalidates_redirect_targets(monkeypatch):
+    """A public URL that redirects to an internal address must NOT be followed (redirect-SSRF)."""
+    import httpx
+
+    from laboratree.core import net
+
+    class FakeResp:
+        def __init__(self, status, headers=None):
+            self.status_code = status
+            self.headers = headers or {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def iter_bytes(self):
+            yield b"data"
+
+    def fake_stream(method, url, **kw):
+        # the public entrypoint 302-redirects to the cloud-metadata endpoint
+        if "8.8.8.8" in url:
+            return FakeResp(302, {"location": "http://169.254.169.254/latest/meta-data/"})
+        raise AssertionError(f"should never fetch the internal target, but tried {url}")
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    # 8.8.8.8 is public so the first hop passes the guard, but the redirect target is link-local →
+    # safe_fetch must re-validate and refuse, returning None without fetching it.
+    assert net.safe_fetch("http://8.8.8.8/innocent.csv") is None

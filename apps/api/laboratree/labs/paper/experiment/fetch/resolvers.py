@@ -59,50 +59,18 @@ class _Budget:
 
 
 def _http_get(url: str, budget: _Budget, _retry: bool = True) -> bytes | None:
-    """One rate-limited, size-capped, SSRF-guarded GET. Returns body bytes or None. Never raises."""
-    import httpx
+    """One rate-limited GET, delegating to the shared SSRF-safe fetcher (per-hop validation + size
+    cap). Returns body bytes or None. Never raises."""
+    from laboratree.core.net import safe_fetch
 
-    from laboratree.core.net import is_public_http_url
-
-    if not is_public_http_url(url):
-        log.info("SSRF guard blocked %s", url)
-        return None
     if not budget.spend():
         log.info("request budget exhausted; skipping %s", url)
         return None
     _throttle()
-    try:
-        with httpx.stream(
-            "GET",
-            url,
-            timeout=REQUEST_TIMEOUT,
-            follow_redirects=True,
-            headers={"User-Agent": USER_AGENT},
-        ) as resp:
-            if resp.status_code != 200:
-                log.debug("GET %s -> HTTP %s", url, resp.status_code)
-                return None
-            length = resp.headers.get("content-length", "")
-            if length.isdigit() and int(length) > MAX_RESPONSE_BYTES:
-                log.info("GET %s: Content-Length %s exceeds %s cap; aborting", url, length, MAX_RESPONSE_BYTES)
-                return None
-            chunks: list[bytes] = []
-            total = 0
-            for chunk in resp.iter_bytes():
-                total += len(chunk)
-                if total > MAX_RESPONSE_BYTES:
-                    log.info("GET %s: body exceeded %s-byte cap mid-stream; aborting", url, MAX_RESPONSE_BYTES)
-                    return None
-                chunks.append(chunk)
-            return b"".join(chunks)
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
-        log.debug("GET %s transport failure: %s", url, exc)
-        if _retry:  # at most one retry; it still spends request budget
-            return _http_get(url, budget, _retry=False)
-        return None
-    except Exception as exc:
-        log.debug("GET %s failed: %s", url, exc)
-        return None
+    data = safe_fetch(url, timeout=REQUEST_TIMEOUT, max_bytes=MAX_RESPONSE_BYTES, user_agent=USER_AGENT)
+    if data is None and _retry:  # one retry (still spends request budget)
+        return _http_get(url, budget, _retry=False)
+    return data
 
 
 def _get_json(url: str, budget: _Budget):
