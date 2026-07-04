@@ -16,6 +16,7 @@ from ...evaluation.metrics import (
     classification_metrics,
     numeric_features,
     regression_metrics,
+    sample_predictions,
 )
 
 _SEED = 1729
@@ -77,7 +78,12 @@ class LogisticRegressionModel(Component):
 
         for k, v in metrics.items():
             ctx.emit(k, v, kind="metric", component=self.spec.id)
-        return {"metrics": metrics, "task": "classification", "n_test": int(len(yte))}
+        return {
+            "metrics": metrics,
+            "task": "classification",
+            "n_test": int(len(yte)),
+            "predictions": sample_predictions(yte, pred, "classification"),
+        }
 
 
 @register
@@ -107,6 +113,11 @@ class LinearRegressionModel(Component):
 
         df: pd.DataFrame = ctx.inputs["dataset"].dropna()
         target = ctx.params["target"]
+        if not pd.api.types.is_numeric_dtype(df[target]):
+            raise ValueError(
+                f"Linear regression needs a numeric target, but '{target}' is categorical — this "
+                "looks like a classification task. Try logistic regression or gradient boosting."
+            )
         feats = numeric_features(df, target, ctx.params.get("features"))
         if not feats:
             raise ValueError("no numeric features available for linear regression")
@@ -119,4 +130,9 @@ class LinearRegressionModel(Component):
 
         for k, v in metrics.items():
             ctx.emit(k, v, kind="metric", component=self.spec.id)
-        return {"metrics": metrics, "task": "regression", "n_test": int(len(yte))}
+        return {
+            "metrics": metrics,
+            "task": "regression",
+            "n_test": int(len(yte)),
+            "predictions": sample_predictions(yte, pred, "regression"),
+        }

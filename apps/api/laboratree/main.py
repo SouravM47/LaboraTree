@@ -13,6 +13,7 @@ from .api import (
     auth,
     collection,
     components,
+    datasets,
     experiments,
     gates,
     health,
@@ -66,6 +67,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(orgs.router)
 app.include_router(projects.router)
+app.include_router(datasets.router)
 app.include_router(runs.router)
 app.include_router(artifacts.router)
 app.include_router(gates.router)

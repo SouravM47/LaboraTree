@@ -17,6 +17,7 @@ from ...evaluation.metrics import (
     classification_metrics,
     numeric_features,
     regression_metrics,
+    sample_predictions,
 )
 
 _SEED = 1729
@@ -106,4 +107,9 @@ class GradientBoostingModel(Component):
 
         for k, v in metrics.items():
             ctx.emit(k, v, kind="metric", component=self.spec.id)
-        return {"metrics": metrics, "task": task, "n_test": int(len(yte))}
+        return {
+            "metrics": metrics,
+            "task": task,
+            "n_test": int(len(yte)),
+            "predictions": sample_predictions(yte, pred, task),
+        }

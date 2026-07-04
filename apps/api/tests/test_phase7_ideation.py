@@ -6,7 +6,9 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from laboratree.core.search import SearchHit
 from laboratree.labs.ideation.coscientist import run_ideation, tournament
+from laboratree.labs.ideation.evidence import brainstorm, gather_evidence, plan_queries
 from laboratree.main import app
 
 
@@ -70,3 +72,86 @@ def test_ideation_api(monkeypatch):
         got = client.get(f"/api/ideation/{sid}", headers=h)
         assert got.status_code == 200
         assert got.json()["goal"] == "reduce urban heat islands"
+
+
+# ---------------- evidence hunt ----------------
+
+def _fake_evidence_complete(system: str, prompt: str, **kw) -> str:
+    if "plan web searches" in system:
+        return '["women literacy rural development study", "female education economic growth India"]'
+    if "evidence brief" in system:
+        return (
+            '{"summary": "Multiple studies link female literacy to development [1][2].",'
+            ' "stance": "supports", "confidence": 0.7,'
+            ' "key_findings": [{"finding": "Literacy correlates with income", "sources": [1]}],'
+            ' "insights": ["Effect may be mediated by health outcomes"],'
+            ' "variables_to_test": [{"name": "female_literacy_rate", "role": "independent",'
+            ' "rationale": "the treatment variable"}],'
+            ' "gaps": ["Few causal (RCT) studies"]}'
+        )
+    return "ok"
+
+
+def _fake_search(query: str, count: int):
+    return [
+        SearchHit(title="Female literacy and growth", url="https://example.org/a", description="A study.", source="brave"),
+        SearchHit(title="Rural development report", url="https://example.org/b", description="Stats.", source="brave"),
+    ]
+
+
+def test_plan_queries_falls_back_without_llm_json():
+    qs = plan_queries("some hypothesis", lambda s, p, **k: "not json")
+    assert qs and all(isinstance(q, str) for q in qs)
+
+
+def test_gather_evidence_builds_cited_brief():
+    out = gather_evidence(
+        "If female literacy rises in rural India, rural development improves",
+        search_fn=_fake_search,
+        complete_fn=_fake_evidence_complete,
+        max_sources=6,
+    )
+    assert out["sources"] and out["sources"][0]["url"] == "https://example.org/a"
+    brief = out["brief"]
+    assert brief["stance"] == "supports"
+    assert brief["variables_to_test"][0]["name"] == "female_literacy_rate"
+
+
+def test_gather_evidence_handles_no_sources():
+    out = gather_evidence(
+        "obscure hypothesis", search_fn=lambda q, c: [], complete_fn=_fake_evidence_complete
+    )
+    assert out["sources"] == []
+    assert out["brief"]["stance"] == "inconclusive"
+
+
+def test_brainstorm_is_grounded_in_brief_and_sources():
+    captured = {}
+
+    def _complete(system, prompt, **kw):
+        captured["system"] = system
+        captured["prompt"] = prompt
+        return "Consider controlling for household income [1]. Gather district-level literacy data."
+
+    out = brainstorm(
+        hypothesis="female literacy -> rural development",
+        brief={"summary": "positive link", "stance": "mixed",
+               "variables_to_test": [{"name": "female_literacy_rate", "role": "independent"}]},
+        sources=[{"title": "Study A", "url": "https://example.org/a", "snippet": "..."}],
+        question="What confounders should I control for?",
+        history=[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}],
+        complete_fn=_complete,
+    )
+    assert "income" in out["answer"]
+    # grounded: the brief + the source + the question all reach the model
+    assert "female_literacy_rate" in captured["prompt"]
+    assert "https://example.org/a" in captured["prompt"]
+    assert "confounders" in captured["prompt"]
+
+
+def test_brainstorm_degrades_on_llm_error():
+    def _boom(system, prompt, **kw):
+        raise RuntimeError("llm down")
+
+    out = brainstorm("h", {}, [], "q?", [], _boom)
+    assert out["answer"]  # non-empty fallback, never raises

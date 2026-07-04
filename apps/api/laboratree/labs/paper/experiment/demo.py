@@ -66,33 +66,77 @@ def _looks_categorical(card: dict, target: str) -> bool:
     return bool(ex) and not ex.replace(".", "", 1).replace("-", "", 1).isdigit()
 
 
+def _num(x: Any) -> float | None:
+    try:
+        return float(str(x).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _synthesize(card: dict, n_rows: int, target: str) -> dict[str, Any]:
-    """Deterministic numpy synthesis — always produces a usable dataset where the target genuinely
-    depends on the features. Used as a fallback (and safety net) for the LLM generator."""
+    """Deterministic numpy synthesis with REALISTIC feature values (centered on each variable's
+    example value) and a NOISY, MULTI-feature target — so a model must use several features, metrics
+    aren't a trivial 100%, and correlations look realistic."""
     import numpy as np
 
     rng = np.random.default_rng(42)
-    ivs = [_name(v) for v in (card.get("independent_variables") or []) if _name(v)]
-    # Guarantee at least a couple of features so a model has something to learn.
+    iv_objs = [v for v in (card.get("independent_variables") or []) if _name(v)]
+    ivs = [_name(v) for v in iv_objs]
     if len(ivs) < 2:
-        ivs = list(dict.fromkeys(ivs + [f"feature_{i + 1}" for i in range(3)]))
-    n = max(int(n_rows), 30)
+        extra = [f"feature_{i + 1}" for i in range(3)]
+        ivs = list(dict.fromkeys(ivs + extra))
+        iv_objs = [{"name": x} for x in ivs]
+    n = max(int(n_rows), 500)  # enough that dropna (from injected missingness) still leaves a solid set
+    k = len(ivs)
 
-    X = rng.normal(size=(n, len(ivs)))
-    weights = rng.normal(size=len(ivs))
-    latent = X @ weights + rng.normal(scale=0.5, size=n)
+    # realistic centre + spread per feature, from its example value
+    centers, spreads = [], []
+    for v in iv_objs[:k]:
+        c = _num(v.get("example_value") if isinstance(v, dict) else None)
+        c = 50.0 if c is None else c
+        centers.append(c)
+        spreads.append(max(1.0, abs(c) * 0.25))
+    centers = np.array(centers)
+    spreads = np.array(spreads)
+
+    Z = rng.normal(size=(n, k))  # standardized latent features
+    Xraw = centers + spreads * Z  # realistic-looking values
+    # A handful of STRONG predictors among many pure-noise columns (like real data) — so models reach
+    # a believable ~0.85 (not a trivial 1.0) and the tree branches on several features (not just one).
+    strong_k = min(5, k)
+    mag = np.zeros(k)
+    idx = rng.choice(k, size=strong_k, replace=False)
+    mag[idx] = rng.uniform(1.8, 3.0, size=strong_k)
+    weights = np.sign(rng.normal(size=k)) * mag
+    raw = Z @ weights
+    raw = (raw - raw.mean()) / (raw.std() or 1.0)
 
     tname = target or "target"
-    records: list[dict[str, Any]] = []
-    if _looks_categorical(card, target):
-        probs = 1.0 / (1.0 + np.exp(-latent))
-        y = (probs > 0.5).astype(int)
+    classif = _looks_categorical(card, target)
+    tv = card.get("target_variable")
+    pos = (str(tv.get("example_value", "")).strip() if isinstance(tv, dict) else "") or "yes"
+    neg = f"not {pos}"
+    if classif:
+        # deterministic boundary + ~6% label-flip noise → a believable ~0.86 ceiling (not a fake 1.0)
+        clean = raw > 0
+        flip = rng.random(n) < 0.06
+        yb = (clean ^ flip).astype(int)
     else:
-        y = np.round(50 + 10 * latent, 2)
+        yv = np.round(50 + 12 * raw + rng.normal(scale=2.5, size=n), 2)
 
+    # Inject light, realistic missingness into a few feature columns so the imputation step has
+    # something to do (real clinical data like CKD is missing-heavy). Kept low + to few columns so
+    # row-wise dropna still keeps most of the data for the models.
+    miss_cols = ivs[: min(3, k)]
+    miss = rng.random((n, len(miss_cols))) < 0.08
+
+    records: list[dict[str, Any]] = []
     for i in range(n):
-        row = {name: round(float(X[i, j]), 3) for j, name in enumerate(ivs)}
-        row[tname] = int(y[i]) if _looks_categorical(card, target) else float(y[i])
+        row = {name: round(float(Xraw[i, j]), 2) for j, name in enumerate(ivs)}
+        for mj, mc in enumerate(miss_cols):
+            if miss[i, mj]:
+                row[mc] = None  # → empty CSV cell → NaN → imputed later
+        row[tname] = (pos if yb[i] else neg) if classif else float(yv[i])
         records.append(row)
     return {"columns": ivs + [tname], "records": records, "target": tname, "caveat": CAVEAT}
 
@@ -100,26 +144,8 @@ def _synthesize(card: dict, n_rows: int, target: str) -> dict[str, Any]:
 def generate_demo_dataset(
     paper_text: str, card: dict, n_rows: int, complete_fn: CompleteFn
 ) -> dict[str, Any]:
-    ivs = [_name(v) for v in (card.get("independent_variables") or [])]
+    """Deterministic, tunable synthetic data. We use the numpy synthesizer (not the LLM) so the data
+    has realistic values, friendly class labels, and a genuine multi-feature signal — which the EDA
+    charts and model animations depend on."""
     target = _name(card.get("target_variable")) or "target"
-    system = (
-        "You generate a realistic SYNTHETIC tabular dataset to pre-test a paper reproduction. Make "
-        "the target genuinely depend on the features (so a model trained on it behaves plausibly). "
-        "Honor any sample size, ranges, or distributions the paper mentions. Return ONLY JSON."
-    )
-    instruction = (
-        f'Return ONLY JSON: {{"columns": [...], "rows": [{{"col": value}}, ...]}} with ~{n_rows} rows.\n'
-        f"Columns = the feature names plus the target; use numeric values where appropriate.\n"
-        f"Variables:\n{_schema_hint(card)}\n\n=== PAPER (excerpt) ===\n{paper_text[:4000]}"
-    )
-    try:
-        parsed = _parse(complete_fn(system, instruction))
-    except Exception:
-        parsed = {}
-    columns = parsed.get("columns") or (ivs + ([target] if target else []))
-    rows = [r for r in (parsed.get("rows") or []) if isinstance(r, dict)][: max(n_rows * 3, 300)]
-
-    # Safety net: the LLM can truncate/omit rows (long JSON) — never hand back an empty dataset.
-    if len(rows) < 10:
-        return _synthesize(card, n_rows, target)
-    return {"columns": columns, "records": rows, "target": target, "caveat": CAVEAT}
+    return _synthesize(card, n_rows, target)

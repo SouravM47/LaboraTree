@@ -42,8 +42,11 @@ class Settings(BaseSettings):
     generation_model: str = ""
     reasoning_model: str = ""
 
-    # Plain OpenAI
+    # Plain OpenAI — or ANY OpenAI-compatible endpoint (DeepSeek, DeepInfra, Together, Fireworks,
+    # OpenRouter, Groq, a self-hosted vLLM/Ollama). Set openai_base_url to that provider's /v1 URL,
+    # openai_model to its model id, openai_api_key to its key. Leave base_url blank for real OpenAI.
     openai_api_key: str = ""
+    openai_base_url: str = ""  # e.g. https://api.deepseek.com  ·  https://api.deepinfra.com/v1/openai
     openai_model: str = "gpt-5.1"
     openai_embedding_model: str = "text-embedding-3-small"
 
@@ -73,6 +76,13 @@ class Settings(BaseSettings):
     # --- Blob storage ---
     blob_backend: str = "local"
     blob_local_root: str = ""
+
+    # --- Web search (dataset + evidence discovery; used by the fetch agent & Ideation Lab) ---
+    # Keys live only in the gitignored .env. Provider order: brave first, serpapi fallback.
+    web_search_provider: str = "brave"        # "brave" | "serpapi" | "none"
+    brave_search_api_key: str = ""
+    serpapi_key: str = ""
+    web_search_max_results: int = 8
 
     # --- LLM observability ---
     llm_tracing: bool = True

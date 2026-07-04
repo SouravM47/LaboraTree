@@ -44,7 +44,8 @@ def test_logistic_regression_component_runs():
 
 
 def test_linear_regression_component_runs():
-    df = pd.DataFrame({"x": range(50)})
+    # a float feature (not a unique monotonic integer, which the leakage guard now drops as ID-like)
+    df = pd.DataFrame({"x": [i * 0.5 for i in range(50)]})
     df["y"] = 2 * df["x"] + 1
     ctx = RunContext(run_id="r", org_id="o", params={"target": "y"},
                      inputs={"dataset": df}, evidence=_Sink())
