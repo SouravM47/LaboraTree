@@ -232,3 +232,108 @@ def test_hunt_datasets_ranks_real_datasets_and_filters_articles():
     assert "https://news.example.com/op-ed" not in urls           # article filtered
     top = out["candidates"][0]
     assert top["direct_download"] is True and top["relevance"] >= 0.5
+
+
+# ---------------- auto-experiment (deep agent skill selection) ----------------
+
+def test_detect_task():
+    import pandas as pd
+    from laboratree.labs.ideation.auto_experiment import detect_task
+
+    clf = pd.DataFrame({"x": range(20), "y": ["a", "b"] * 10})
+    reg = pd.DataFrame({"x": range(20), "y": [float(i) for i in range(20)]})
+    assert detect_task(clf, "y") == "classification"
+    assert detect_task(reg, "y") == "regression"
+
+
+def test_plan_experiment_validates_and_falls_back():
+    from laboratree.labs.ideation.auto_experiment import plan_experiment
+
+    avail = ["model.ml.logistic_regression", "model.ml.random_forest", "model.ml.gradient_boosting"]
+
+    def good(system, prompt, **kw):
+        return '{"preprocessing": "impute+scale", "models": ["model.ml.random_forest"], "rationale": "trees handle mixed types"}'
+
+    plan = plan_experiment({"n_rows": 100}, "h", "classification", avail, good)
+    assert plan["models"] == ["model.ml.random_forest"]
+
+    # bad LLM output → fall back to the task-appropriate default pool (all in the available list)
+    plan2 = plan_experiment({"n_rows": 100}, "h", "classification", avail, lambda s, p, **k: "garbage")
+    assert plan2["models"] and all(m in avail for m in plan2["models"])
+
+
+def test_rank_and_summarize_pick_best_by_metric():
+    from laboratree.labs.ideation.auto_experiment import rank_results, summarize_results
+
+    results = [
+        {"component": "model.ml.logistic_regression", "metrics": {"f1": 0.70, "accuracy": 0.72}},
+        {"component": "model.ml.random_forest", "metrics": {"f1": 0.88, "accuracy": 0.90}},
+    ]
+    assert rank_results(results, "classification")[0]["component"] == "model.ml.random_forest"
+
+    # deterministic fallback when the LLM can't structure a verdict
+    out = summarize_results("h", "classification", results, lambda s, p, **k: "not json")
+    assert out["best_model"] == "model.ml.random_forest"
+
+
+def _auto_experiment_llm(system: str, prompt: str, **kw) -> str:
+    if "ML strategist" in system:
+        return '{"preprocessing": "impute+scale", "models": ["model.ml.logistic_regression", "model.ml.random_forest"], "rationale": "baselines"}'
+    if "research analyst" in system:
+        return '{"best_model": "model.ml.random_forest", "verdict": "RF fits best.", "insights": ["fit is not causation"]}'
+    return "{}"
+
+
+def test_auto_experiment_runs_real_models_end_to_end(monkeypatch):
+    import asyncio
+
+    import pandas as pd
+    from laboratree.core.db.postgres import sessionmaker
+    from laboratree.core.repro import dataframe_hash
+    from laboratree.core.storage import get_blob_store
+    from laboratree.labs.ideation import llm as ideation_llm
+    from laboratree.projects.models import Dataset
+
+    monkeypatch.setattr(ideation_llm, "default_complete", _auto_experiment_llm)
+
+    # a small but learnable classification dataset
+    rng = __import__("random").Random(0)
+    rows = [{"x1": rng.gauss(0, 1), "x2": rng.gauss(0, 1)} for _ in range(80)]
+    for r in rows:
+        r["y"] = "yes" if (r["x1"] + r["x2"] > 0) else "no"
+    df = pd.DataFrame(rows)
+
+    with TestClient(app) as client:
+        email = f"user-{uuid.uuid4().hex[:10]}@example.com"
+        tok = client.post("/api/auth/register",
+                          json={"email": email, "password": "supersecret1", "full_name": "Q"}).json()
+        h = {"Authorization": f"Bearer {tok['access_token']}"}
+        pid = client.post("/api/projects", json={"name": "AutoX"}, headers=h).json()["id"]
+
+        # insert a Dataset directly (org-scoped) + its blob
+        key = f"test/{uuid.uuid4()}.csv"
+        get_blob_store().put(key, df.to_csv(index=False).encode())
+
+        async def _insert() -> str:
+            async with sessionmaker()() as s:
+                ds = Dataset(org_id=uuid.UUID(tok["org_id"]), project_id=uuid.UUID(pid),
+                             name="autox.csv", storage_key=key, content_hash=dataframe_hash(df),
+                             n_rows=len(df), n_cols=df.shape[1])
+                s.add(ds)
+                await s.flush()
+                did = str(ds.id)
+                await s.commit()
+                return did
+
+        dataset_id = asyncio.run(_insert())
+
+        r = client.post(f"/api/projects/{pid}/ideation/auto-experiment", headers=h,
+                        json={"dataset_id": dataset_id, "target": "y", "hypothesis": "x1+x2 predicts y"})
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["task"] == "classification"
+        assert body["plan"]["models"]                                   # planner chose models
+        ran = [x for x in body["results"] if x.get("metrics")]
+        assert ran, body["results"]                                     # real components produced metrics
+        assert all("run_id" in x for x in ran)                          # each is an Evidence-locked run
+        assert body["summary"]["best_model"]                            # a verdict was produced

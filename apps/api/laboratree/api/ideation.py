@@ -10,14 +10,24 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from ..agents.run_executor import RunFailed, execute_component
 from ..core.deps import PrincipalDep, SessionDep
 from ..core.llm.context import use_llm_context
+from ..core.registry import REGISTRY
 from ..core.search import search_available, web_search
+from ..core.storage import get_blob_store
 from ..labs.ideation import llm as ideation_llm
+from ..labs.ideation.auto_experiment import (
+    detect_task,
+    plan_experiment,
+    profile_dataset,
+    rank_results,
+    summarize_results,
+)
 from ..labs.ideation.coscientist import run_ideation
 from ..labs.ideation.data_hunt import hunt_datasets
 from ..labs.ideation.evidence import brainstorm, gather_evidence
-from ..projects.models import IdeationSession, IdeationStatus, Project
+from ..projects.models import Dataset, IdeationSession, IdeationStatus, Project
 
 router = APIRouter(prefix="/api", tags=["ideation"])
 
@@ -45,6 +55,12 @@ class DataHuntIn(BaseModel):
     hypothesis: str = Field(min_length=8)
     variables: list[str] = []
     max_candidates: int = Field(default=10, ge=4, le=20)
+
+
+class AutoExperimentIn(BaseModel):
+    dataset_id: uuid.UUID
+    target: str
+    hypothesis: str = ""
 
 
 class SessionOut(BaseModel):
@@ -186,3 +202,60 @@ async def data_hunt(
             )
 
     return await asyncio.to_thread(_run)
+
+
+@router.post("/projects/{project_id}/ideation/auto-experiment", status_code=201)
+async def auto_experiment(
+    project_id: uuid.UUID, body: AutoExperimentIn, principal: PrincipalDep, session: SessionDep
+) -> dict[str, Any]:
+    """The deep agent's auto-experiment: profile a dataset, let the LLM pick the task-appropriate
+    models (skill selection), run each as a REAL Evidence-locked component, then read the metrics and
+    write a grounded verdict. Every model run is a tracked Run; every LLM decision is observable."""
+    import asyncio
+    import io
+
+    import pandas as pd
+
+    await _require_project(session, principal, project_id)
+    ds = await session.get(Dataset, body.dataset_id)
+    if ds is None or ds.org_id != principal.org_id:
+        raise HTTPException(status_code=404, detail="dataset not found")
+    try:
+        data = get_blob_store().get(ds.storage_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=410, detail="dataset bytes missing") from exc
+    df = pd.read_csv(io.BytesIO(data), nrows=5000)
+    if body.target not in df.columns:
+        raise HTTPException(status_code=400, detail=f"target '{body.target}' not in dataset columns")
+
+    task = detect_task(df, body.target)
+    profile = profile_dataset(df, body.target)
+    available = sorted(s.id for s in REGISTRY.specs() if s.id.startswith("model.ml."))
+
+    with use_llm_context("ideation", "auto_experiment", project_id=project_id, org_id=principal.org_id):
+        plan = await asyncio.to_thread(
+            plan_experiment, profile, body.hypothesis, task, available, ideation_llm.default_complete
+        )
+        results: list[dict[str, Any]] = []
+        for cid in plan["models"]:
+            try:
+                res = await execute_component(
+                    session, org_id=principal.org_id, project_id=project_id,
+                    component_id=cid, params={"target": body.target},
+                    inputs={"dataset": df}, lab="ideation.auto_experiment",
+                )
+                results.append({
+                    "component": cid, "metrics": res.outputs.get("metrics", {}),
+                    "run_id": str(res.run.id), "evidence_count": res.evidence_count,
+                })
+            except RunFailed as exc:
+                results.append({"component": cid, "metrics": {}, "error": str(exc)})
+        scored = [r for r in results if r.get("metrics")]
+        summary = await asyncio.to_thread(
+            summarize_results, body.hypothesis, task, scored, ideation_llm.default_complete
+        )
+
+    return {
+        "task": task, "profile": profile, "plan": plan,
+        "results": rank_results(results, task), "summary": summary,
+    }
