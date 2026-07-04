@@ -14,6 +14,14 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+# FastAPI's dependency-injection idiom puts callables (Depends/File/Query/…) in argument defaults
+# on purpose — not the B008 anti-pattern.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.File", "fastapi.Query", "fastapi.Form", "fastapi.Body",
+    "fastapi.Path", "fastapi.Header", "fastapi.Cookie",
+]
+
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["apps/api/tests"]

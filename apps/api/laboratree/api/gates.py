@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.deps import PrincipalDep, SessionDep
-from ..projects.models import GateStatus, GateTask, Run
+from ..projects.models import GateStatus, GateTask
 
 router = APIRouter(prefix="/api/gates", tags=["gates"])
 

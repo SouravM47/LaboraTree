@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import io
 import logging
-from collections import defaultdict
 from collections.abc import Callable
 
 log = logging.getLogger(__name__)
@@ -94,6 +93,6 @@ def build_master(candidates: list[dict], fetch_fn: FetchFn) -> dict:
         master = max(frames, key=lambda f: len(f[1]))[1]
         note = ("Downloaded sources had differing schemas (no honest join key), so the largest was used "
                 "as the master; the others are kept as separate tables.")
-    for rec, df in best:
+    for rec, _df in best:
         rec["in_master"] = True
     return {"tables": tables, "master": master, "note": note}

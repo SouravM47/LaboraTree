@@ -10,7 +10,6 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from sqlalchemy import select
 
 from ..core.deps import PrincipalDep, SessionDep
 from ..core.evidence import BufferedEvidenceSink, persist_evidence

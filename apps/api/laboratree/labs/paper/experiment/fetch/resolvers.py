@@ -59,9 +59,14 @@ class _Budget:
 
 
 def _http_get(url: str, budget: _Budget, _retry: bool = True) -> bytes | None:
-    """One rate-limited, size-capped GET. Returns body bytes or None. Never raises."""
+    """One rate-limited, size-capped, SSRF-guarded GET. Returns body bytes or None. Never raises."""
     import httpx
 
+    from laboratree.core.net import is_public_http_url
+
+    if not is_public_http_url(url):
+        log.info("SSRF guard blocked %s", url)
+        return None
     if not budget.spend():
         log.info("request budget exhausted; skipping %s", url)
         return None

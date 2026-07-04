@@ -83,9 +83,13 @@ class AutoExperimentIn(BaseModel):
 
 
 def _download_bytes(url: str) -> bytes | None:
-    """One polite, size-capped GET for the master-dataset builder. Never raises."""
+    """One polite, size-capped GET for the master-dataset builder. SSRF-guarded; never raises."""
     import httpx
 
+    from ..core.net import is_public_http_url
+
+    if not is_public_http_url(url):
+        return None
     try:
         with httpx.stream("GET", url, timeout=20.0, follow_redirects=True,
                           headers={"User-Agent": "Laboratree/0.1 (dataset builder)"}) as resp:
@@ -436,8 +440,11 @@ async def auto_experiment(
         data = get_blob_store().get(ds.storage_key)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=410, detail="dataset bytes missing") from exc
-    df = pd.read_csv(io.BytesIO(data), nrows=5000)
-    if body.target not in df.columns:
+    try:
+        df = pd.read_csv(io.BytesIO(data), nrows=5000)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"could not parse dataset as CSV: {exc}") from exc
+    if df.empty or body.target not in df.columns:
         raise HTTPException(status_code=400, detail=f"target '{body.target}' not in dataset columns")
 
     task = detect_task(df, body.target)

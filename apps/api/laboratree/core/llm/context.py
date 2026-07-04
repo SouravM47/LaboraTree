@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from collections.abc import Iterator
 
 
-@dataclass
+@dataclass(frozen=True)
 class LLMContext:
     lab: str = "unknown"
     operation: str = "complete"
@@ -19,11 +19,12 @@ class LLMContext:
     org_id: str | None = None
 
 
-_ctx: contextvars.ContextVar[LLMContext] = contextvars.ContextVar("llm_ctx", default=LLMContext())
+# default None (not a shared mutable instance); current_llm_context() supplies a fresh empty context
+_ctx: contextvars.ContextVar[LLMContext | None] = contextvars.ContextVar("llm_ctx", default=None)
 
 
 def current_llm_context() -> LLMContext:
-    return _ctx.get()
+    return _ctx.get() or LLMContext()
 
 
 @contextmanager
@@ -55,7 +56,7 @@ def use_llm_operation(operation: str, *, lab: str | None = None) -> Iterator[Non
     """Refine ONLY the operation (and optionally lab) of the enclosing context — inherits its
     project_id/org_id/run_id. Lets a multi-step agent label each sub-call (e.g. 'evidence.plan',
     'evidence.synthesize', 'evidence.variables') so every LLM call is individually observable."""
-    cur = _ctx.get()
+    cur = current_llm_context()
     token = _ctx.set(
         LLMContext(
             lab=lab or cur.lab,
