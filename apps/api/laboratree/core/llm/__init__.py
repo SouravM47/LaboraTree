@@ -43,7 +43,12 @@ class LLMClient:
             self._embed_model = settings.azure_openai_embedding_deployment
             self._temperature: float | None = settings.azure_openai_temperature
         else:
-            self._client = OpenAI(api_key=settings.openai_api_key)
+            # base_url lets us target any OpenAI-compatible provider (DeepSeek, DeepInfra, OpenRouter,
+            # Together, Fireworks, self-hosted vLLM). Blank → the real OpenAI endpoint.
+            self._client = OpenAI(
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_base_url or None,
+            )
             self._chat_model = settings.openai_model
             self._embed_model = settings.openai_embedding_model
             self._temperature = None

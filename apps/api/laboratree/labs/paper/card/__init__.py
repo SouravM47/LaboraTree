@@ -52,40 +52,61 @@ def classify_paper(text: str, complete_fn: CompleteFn) -> str:
 
 _EMPIRICAL_SYSTEM = (
     "You are a research explainer. Produce a Paper Card as STRICT JSON for a smart non-specialist: "
-    "plain language, no unexplained jargon. For every math formula be astute and concrete: define "
-    "every symbol, read the equation in plain words, and give the intuition with an analogy (never a "
-    "vague one-liner). For each variable, give a one-line description of what it actually is and a "
-    "realistic example value. Be COMPLETE: when the paper lists attributes/features in a table or "
-    "enumeration, extract every one of them — do not summarize, sample, or collapse the list."
+    "plain language, no unexplained jargon. The goal: someone with NO modeling or math background "
+    "should fully understand this paper in ~15 minutes from your card alone — every step should also "
+    "say WHY it is done, not just what. Write the problem statement and detailed summary so a "
+    "curious 12-year-old could follow them. Attach math to the SPECIFIC model that uses it, and always "
+    "work the example using the paper's actual feature names and example values — never generic "
+    "placeholders. Define every symbol and read each equation in plain words. For each variable, give a "
+    "one-line description of what it actually is and a realistic example value. Be COMPLETE: when the "
+    "paper lists attributes/features in a table or enumeration, extract every one of them — do not "
+    "summarize, sample, or collapse the list."
 )
 
 _EMPIRICAL_INSTRUCTION = (
     "Return ONLY a JSON object with keys:\n"
     "- paper_type: 'empirical'\n"
-    "- problem_statement: {one_liner (<=20 words), plain (2-3 simple sentences)}\n"
-    "- models_used: array of {name, summary, universal, use_case, example} where:\n"
+    "- problem_statement: {one_liner (<=20 words), plain} where plain is EXPLAIN-LIKE-I'M-5 simple: "
+    "2-4 short everyday sentences that clearly state WHAT the authors are trying to predict or decide, "
+    "and WHAT information they use to do it (name the kind of inputs/features and the data). Zero "
+    "jargon; spell out any acronym in plain words.\n"
+    "- detailed_summary: a thorough but plain-English summary of the WHOLE study — what problem, what "
+    "data, what they did, and what they found — 4-8 simple sentences anyone can follow.\n"
+    "- models_used: array of {name, summary, universal, use_case, example, result, math} where:\n"
     "    * summary = what THIS paper does with the model (1-2 sentences),\n"
     "    * universal = a model-agnostic plain explanation of what this kind of model is and how it "
     "works in general (2-3 sentences, no reference to this paper),\n"
     "    * use_case = a common real-world practical use case for this model type,\n"
-    "    * example = a concrete worked mini-example a beginner can picture.\n"
+    "    * example = a concrete worked mini-example a beginner can picture,\n"
+    "    * result = in PLAIN ENGLISH, how THIS model performed in the paper — its accuracy and other "
+    "scores and what they mean (e.g. 'scored 99.16% accuracy and 100% precision — almost never wrong'). "
+    "Empty string if the paper gives no numbers for it.\n"
+    "    * math = array of {formula, plain, symbols, worked_example} for the formula(s) THIS model uses "
+    "(only if the paper states them; else []). plain = read it in words; symbols = define EVERY symbol, "
+    "one per line as 'symbol = meaning'; worked_example = a SUPER-EASY step-by-step calculation that "
+    "PLUGS IN this paper's REAL feature names and their example values (from independent_variables / "
+    "target_variable) and shows the numeric result — concrete, not abstract.\n"
+    "- best_model: if multiple models are compared, the name of the best one plus one plain sentence on "
+    "why (e.g. 'XGBoost — highest accuracy at 99.16%'). Empty string if only one model.\n"
     "- data_sources: array of strings\n"
-    "- preprocessing: array of short strings (the preprocessing funnel)\n"
+    "- preprocessing: array of short strings (the preprocessing funnel). Each string states the step "
+    "AND, after an em-dash, WHY it is needed in everyday words (e.g. 'Fill missing values with the "
+    "column mean — models can't use rows with holes, and this keeps the row without inventing "
+    "extreme values').\n"
     "- data_sample: string (size/shape/description)\n"
-    "- independent_variables: array of {name, description, example_value} — list EVERY feature / "
-    "attribute / predictor the paper uses. If the paper has an attribute or feature table, include "
-    "ONE entry per row of that table. Do NOT truncate or summarize; completeness matters more than "
-    "brevity (papers often have 10-50 features).\n"
-    "- target_variable: {name, description, example_value}\n"
-    "- variants: array of strings (e.g. AR1/AR2 if any)\n"
-    "- math: array of {formula, plain, symbols, intuition, example} where:\n"
-    "    * plain = read the equation in words — what it actually computes, step by step (astute and "
-    "concrete, never a vague one-liner),\n"
-    "    * symbols = define EVERY symbol/variable in the formula, one per line as 'symbol = meaning' "
-    "(e.g. 'θ = model parameters\\nλ = regularization strength'). Leave out nothing.\n"
-    "    * intuition = the underlying idea in 1-2 sentences with a simple analogy,\n"
-    "    * example = a tiny WORKED example that plugs in real numbers and shows the result, so any "
-    "person can follow it (e.g. 'if y=1 and ŷ=0.8, loss = -(1·log0.8) ≈ 0.22').\n"
+    "- independent_variables: array of {name, description, example_value, type, units} — list EVERY "
+    "feature / attribute / predictor the paper uses. description = what this measurement actually IS "
+    "in everyday words AND why a doctor/analyst would care about it (one line, e.g. 'hemoglobin — the "
+    "oxygen-carrying protein in blood; low values suggest anemia, common in kidney disease'). type = "
+    "plain data type (Integer, Real, Categorical, Binary, Nominal, Text...); units = measurement unit "
+    "if any (e.g. mg/dL, years, '' if none). If the paper has an attribute/feature table, include ONE "
+    "entry per row. Do NOT truncate or summarize; completeness matters more than brevity (papers "
+    "often have 10-50 features).\n"
+    "- target_variable: {name, description, example_value, type, units}\n"
+    "- variants: array of {name, description} — each distinct configuration the paper evaluates "
+    "(e.g. different feature subsets, data splits, or model settings). description = one plain line on "
+    "what makes it different and its headline result if the paper gives one (e.g. 'Set 3 = 9 features "
+    "picked by BBO from Set 1; ~98.7% accuracy'). Empty array if none.\n"
     "- results: string (simple)\n"
     "- inference: string (what it means, simple)\n"
     "Use empty arrays/strings/objects when unknown. Do not invent numbers."
@@ -99,9 +120,14 @@ def generate_empirical_card(text: str, complete_fn: CompleteFn) -> dict:
 
 def _var(v: Any) -> dict:
     if isinstance(v, dict):
-        return {"name": str(v.get("name", "")), "description": str(v.get("description", "")),
-                "example_value": str(v.get("example_value", ""))}
-    return {"name": str(v), "description": "", "example_value": ""}
+        return {
+            "name": str(v.get("name", "")),
+            "description": str(v.get("description", "")),
+            "example_value": str(v.get("example_value", "")),
+            "type": str(v.get("type", "")),
+            "units": str(v.get("units", "")),
+        }
+    return {"name": str(v), "description": "", "example_value": "", "type": "", "units": ""}
 
 
 def _model(m: Any) -> dict:
@@ -112,8 +138,19 @@ def _model(m: Any) -> dict:
             "universal": str(m.get("universal", "")),
             "use_case": str(m.get("use_case", "")),
             "example": str(m.get("example", "")),
+            "result": str(m.get("result", "")),
+            "math": [_math(x) for x in (m.get("math") or [])],
         }
-    return {"name": str(m), "summary": "", "universal": "", "use_case": "", "example": ""}
+    return {
+        "name": str(m), "summary": "", "universal": "", "use_case": "",
+        "example": "", "result": "", "math": [],
+    }
+
+
+def _variant(v: Any) -> dict:
+    if isinstance(v, dict):
+        return {"name": str(v.get("name", "")), "description": str(v.get("description", ""))}
+    return {"name": str(v), "description": ""}
 
 
 def _problem(ps: Any) -> dict:
@@ -140,9 +177,11 @@ def _math(x: Any) -> dict:
             "plain": str(x.get("plain", x.get("explanation", ""))),
             "symbols": str(symbols),
             "intuition": str(x.get("intuition", "")),
+            # worked_example (real-data, per-model) — fall back to legacy `example`
+            "worked_example": str(x.get("worked_example", x.get("example", ""))),
             "example": str(x.get("example", "")),
         }
-    return {"formula": str(x), "plain": "", "symbols": "", "intuition": "", "example": ""}
+    return {"formula": str(x), "plain": "", "symbols": "", "intuition": "", "worked_example": "", "example": ""}
 
 
 def normalize_card(card: dict) -> dict:
@@ -150,12 +189,15 @@ def normalize_card(card: dict) -> dict:
     out = dict(card)
     out["paper_type"] = "empirical"
     out["problem_statement"] = _problem(out.get("problem_statement"))
-    for f in ("data_sources", "preprocessing", "variants"):
+    for f in ("data_sources", "preprocessing"):
         out.setdefault(f, [])
-    out["math"] = [_math(m) for m in out.get("math", [])]
+    out["variants"] = [_variant(v) for v in out.get("variants", [])]
+    out["math"] = [_math(m) for m in out.get("math", [])]  # legacy top-level math (no longer rendered)
     out.setdefault("data_sample", "")
     out.setdefault("results", "")
     out.setdefault("inference", "")
+    out.setdefault("detailed_summary", "")
+    out.setdefault("best_model", "")
     out["independent_variables"] = [_var(v) for v in out.get("independent_variables", [])]
     out["models_used"] = [_model(m) for m in out.get("models_used", [])]
     tv = out.get("target_variable")

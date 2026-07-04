@@ -112,6 +112,21 @@ export default function PapersLab({ projectId }: { projectId: string }) {
           </ul>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete paper?"
+        message={
+          <>
+            <b className="text-forest">{pendingDelete?.title}</b> — its Paper Card, chunks and any
+            experiments will be permanently deleted. This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete paper"
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

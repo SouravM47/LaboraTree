@@ -29,13 +29,72 @@ MODEL_MAP: list[tuple[str, str]] = [
     ("gradient-boost", "model.ml.gradient_boosting"),
     ("gbm", "model.ml.gradient_boosting"),
     ("boost", "model.ml.gradient_boosting"),
-    ("random forest", "model.ml.gradient_boosting"),
-    ("decision tree", "model.ml.gradient_boosting"),
+    ("random forest", "model.ml.random_forest"),
+    ("decision tree", "model.ml.decision_tree"),
     ("gbdt", "model.ml.gradient_boosting"),
+    ("k-nearest", "model.ml.knn"),
+    ("nearest neighbor", "model.ml.knn"),
+    ("nearest neighbour", "model.ml.knn"),
+    ("k-nn", "model.ml.knn"),
+    ("knn", "model.ml.knn"),
+    ("support vector", "model.ml.svm"),
+    ("svm", "model.ml.svm"),
+    ("svc", "model.ml.svm"),
+    ("naive bayes", "model.ml.naive_bayes"),
+    ("naïve bayes", "model.ml.naive_bayes"),
+    ("bidirectional lstm", "model.dl.rnn"),
+    ("bi-lstm", "model.dl.rnn"),
+    ("bilstm", "model.dl.rnn"),
+    ("lstm", "model.dl.rnn"),
+    ("gru", "model.dl.rnn"),
+    ("cnn", "model.dl.cnn"),
+    ("convolutional", "model.dl.cnn"),
+    ("rnn", "model.dl.rnn"),
+    ("recurrent", "model.dl.rnn"),
+    ("neural network", "model.ml.mlp"),
+    ("neural", "model.ml.mlp"),
+    ("perceptron", "model.ml.mlp"),
+    ("mlp", "model.ml.mlp"),
+    ("deep learning", "model.ml.mlp"),
+    ("k-means", "model.clustering.kmeans"),
+    ("kmeans", "model.clustering.kmeans"),
+    ("dbscan", "model.clustering.dbscan"),
+    ("gaussian mixture", "model.clustering.gmm"),
+    ("gmm", "model.clustering.gmm"),
+    ("clustering", "model.clustering.kmeans"),
+    ("isolation forest", "model.anomaly.isolation_forest"),
+    ("local outlier", "model.anomaly.lof"),
+    ("one-class svm", "model.anomaly.one_class_svm"),
+    ("anomaly", "model.anomaly.isolation_forest"),
+    ("outlier", "model.anomaly.isolation_forest"),
+    ("poisson", "model.econometrics.poisson"),
+    ("ols", "model.econometrics.ols"),
     ("linear", "model.ml.linear_regression"),
-    ("ols", "model.ml.linear_regression"),
     ("regression", "model.ml.linear_regression"),
 ]
+
+
+# Model variants are the same component with different params (AR1/AR2 rule): a "GRU" or a
+# "Bidirectional LSTM" is model.dl.rnn with its cell/bidirectional params set.
+MODEL_PARAMS: dict[str, dict[str, Any]] = {
+    "bidirectional lstm": {"cell": "lstm", "bidirectional": True},
+    "bi-lstm": {"cell": "lstm", "bidirectional": True},
+    "bilstm": {"cell": "lstm", "bidirectional": True},
+    "lstm": {"cell": "lstm"},
+    "gru": {"cell": "gru"},
+    "rnn": {"cell": "rnn"},
+    "recurrent": {"cell": "rnn"},
+}
+
+# Truly unavailable architectures (transformers etc.) — the closest honest stand-in is the MLP.
+_NEURAL_HINTS = ("transformer", "autoencoder", "bert", "attention")
+
+
+def standin_for(model_name: str) -> str:
+    low = model_name.lower()
+    if any(h in low for h in _NEURAL_HINTS):
+        return "model.ml.mlp"
+    return DEFAULT_STANDIN
 
 
 # When a paper's model isn't in the registry (SVM, k-NN, a neural net, a custom model…), the user
@@ -43,11 +102,12 @@ MODEL_MAP: list[tuple[str, str]] = [
 DEFAULT_STANDIN = "model.ml.gradient_boosting"
 
 
-def _model_component(model_name: str) -> str | None:
+def _model_component(model_name: str) -> tuple[str, dict[str, Any]] | None:
+    """Match a paper's model name to a registry component id + any variant params (cell type…)."""
     low = model_name.lower()
     for key, cid in MODEL_MAP:
         if key in low:
-            return cid
+            return cid, dict(MODEL_PARAMS.get(key, {}))
     return None
 
 
@@ -82,12 +142,13 @@ def default_walkthrough(card: dict[str, Any]) -> list[dict[str, Any]]:
     for model in card.get("models_used") or []:
         mname = _name(model)
         detail = model.get("summary", "") if isinstance(model, dict) else "Fit and evaluate"
-        cid = _model_component(mname)
+        match = _model_component(mname)
+        cid, extra = match if match else (None, {})
         steps.append(_node(i, "model", mname, detail or "Fit and evaluate",
                            component_id=cid,
                            available=cid is not None,
-                           suggested_component=cid or DEFAULT_STANDIN,
-                           params={"target": target} if target else {}))
+                           suggested_component=cid or standin_for(mname),
+                           params=({"target": target} if target else {}) | extra))
         i += 1
 
     steps.append(_node(i, "result", "Reported results", str(card.get("results") or "")))
@@ -96,17 +157,43 @@ def default_walkthrough(card: dict[str, Any]) -> list[dict[str, Any]]:
     return steps
 
 
+def _normalize_pipeline(steps: list[dict[str, Any]], card: dict[str, Any]) -> list[dict[str, Any]]:
+    """Guarantee an EDA step sits BEFORE the first model, and demote any post-model 'eda' (e.g. a
+    SHAP explanation the LLM tagged as EDA) to a result step — so 'EDA' always means pre-model
+    exploration. Re-id nodes n0..nk afterwards."""
+    model_idx = next((i for i, s in enumerate(steps) if s.get("kind") == "model"), None)
+    if model_idx is not None:
+        for i, s in enumerate(steps):
+            if i >= model_idx and s.get("kind") == "eda":
+                s["kind"] = "result"
+        if not any(s.get("kind") == "eda" for s in steps[:model_idx]):
+            ivs = [_name(v) for v in (card.get("independent_variables") or [])]
+            target = _name(card.get("target_variable"))
+            steps.insert(
+                model_idx,
+                _node(
+                    0, "eda", "Exploratory data analysis",
+                    f"Explore the {len(ivs)} features vs the target '{target}' before modeling.",
+                ),
+            )
+    for i, s in enumerate(steps):
+        s["id"] = f"n{i}"
+    return steps
+
+
 def build_walkthrough(card: dict[str, Any], complete_fn: CompleteFn | None = None) -> list[dict[str, Any]]:
     """Build the walkthrough. With an LLM, refine node titles/details; always fall back to the
     deterministic card-derived pipeline on any error."""
     base = default_walkthrough(card)
     if complete_fn is None:
-        return base
+        return _normalize_pipeline(base, card)
 
     system = (
         "You reconstruct a research paper's pipeline as ordered steps. Return STRICT JSON: an array "
         "of {kind, title, detail} where kind in [data, preprocess, eda, model, result, inference]. "
-        "Keep it faithful and concise."
+        "Keep it faithful and concise. Each detail must be plain everyday language that also says WHY "
+        "the step is done (one short sentence of what + one of why), so a reader with no background "
+        "can follow the whole pipeline."
     )
     try:
         raw = complete_fn(system, json.dumps(card)[:12000])
@@ -120,12 +207,13 @@ def build_walkthrough(card: dict[str, Any], complete_fn: CompleteFn | None = Non
             kind = str(item.get("kind", "data"))
             node = _node(idx, kind, str(item.get("title", "")), str(item.get("detail", "")))
             if kind == "model":
-                cid = _model_component(node["title"])
+                match = _model_component(node["title"])
+                cid, extra = match if match else (None, {})
                 node["component_id"] = cid
                 node["available"] = cid is not None
-                node["suggested_component"] = cid or DEFAULT_STANDIN
-                node["params"] = {"target": _name(card.get("target_variable"))}
+                node["suggested_component"] = cid or standin_for(node["title"])
+                node["params"] = {"target": _name(card.get("target_variable"))} | extra
             steps.append(node)
-        return steps or base
+        return _normalize_pipeline(steps or base, card)
     except Exception:
-        return base
+        return _normalize_pipeline(base, card)

@@ -9,7 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@react-spring/web": "^9.7.5",
     "@xyflow/react": "^12.3.5",
+    "lottie-react": "^2.4.1",
     "next": "^15.1.6",
     "papaparse": "^5.4.1",
     "react": "^19.0.0",

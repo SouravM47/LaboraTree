@@ -72,6 +72,25 @@ async def start_experiment(
     return detail
 
 
+@router.get("/papers/{paper_id}/experiment")
+async def latest_experiment(
+    paper_id: uuid.UUID, principal: PrincipalDep, session: SessionDep
+) -> dict[str, Any]:
+    """Return the most recent experiment for this paper so revisiting the Experiment Lab restores
+    the pipeline, fetched/generated datasets, and gate — nothing is lost between visits."""
+    exp = (
+        await session.execute(
+            select(Experiment)
+            .where(Experiment.paper_id == paper_id, Experiment.org_id == principal.org_id)
+            .order_by(Experiment.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if exp is None:
+        raise HTTPException(status_code=404, detail="no experiment yet")
+    return _detail(exp)
+
+
 @router.post("/experiments/{experiment_id}/demo-data", status_code=201)
 async def demo_data(
     experiment_id: uuid.UUID,
@@ -214,6 +233,22 @@ async def run_node(
         raise HTTPException(status_code=404, detail="dataset not found")
 
     params = {**(node.get("params") or {}), **body.params, "experiment_id": str(exp.id)}
+
+    df = load_dataset_df(dataset)
+    # Resolve the target to a REAL column — demo/uploaded CSVs may name it differently than the
+    # Paper Card (e.g. card says 'class' but the demo column is 'classification'). Prefer an exact
+    # (case-insensitive) match, then a loose match, then fall back to the last column (the usual
+    # target convention). Without this the model raises KeyError and the whole run "fails".
+    tgt = params.get("target")
+    if tgt is not None and tgt not in df.columns and len(df.columns):
+        low = str(tgt).lower()
+        match = next((c for c in df.columns if str(c).lower() == low), None)
+        if match is None:
+            match = next(
+                (c for c in df.columns if low in str(c).lower() or str(c).lower() in low), None
+            )
+        params["target"] = match or df.columns[-1]
+
     try:
         result = await execute_component(
             session,
@@ -221,7 +256,7 @@ async def run_node(
             project_id=exp.project_id,
             component_id=component_id,
             params={k: v for k, v in params.items() if k != "experiment_id"},
-            inputs={"dataset": load_dataset_df(dataset)},
+            inputs={"dataset": df},
             lab="paper.experiment",
         )
     except RunFailed as exc:
@@ -236,6 +271,8 @@ async def run_node(
         "component_id": component_id,
         "forked": bool(body.component_id and body.component_id != node.get("component_id")),
         "metrics": result.outputs.get("metrics", {}),
+        "task": result.outputs.get("task", ""),
+        "predictions": result.outputs.get("predictions", []),
         "paper_reported": card.get("results", ""),
         "synthetic": bool(dataset.synthetic),
         "stand_in": stand_in,

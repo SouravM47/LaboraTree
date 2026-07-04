@@ -42,8 +42,11 @@ class Settings(BaseSettings):
     generation_model: str = ""
     reasoning_model: str = ""
 
-    # Plain OpenAI
+    # Plain OpenAI — or ANY OpenAI-compatible endpoint (DeepSeek, DeepInfra, Together, Fireworks,
+    # OpenRouter, Groq, a self-hosted vLLM/Ollama). Set openai_base_url to that provider's /v1 URL,
+    # openai_model to its model id, openai_api_key to its key. Leave base_url blank for real OpenAI.
     openai_api_key: str = ""
+    openai_base_url: str = ""  # e.g. https://api.deepseek.com  ·  https://api.deepinfra.com/v1/openai
     openai_model: str = "gpt-5.1"
     openai_embedding_model: str = "text-embedding-3-small"
 

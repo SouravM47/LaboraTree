@@ -116,7 +116,11 @@ class DirectUrlResolver:
 
 
 def default_resolvers() -> list[Resolver]:
-    return [DirectUrlResolver(), SklearnToyResolver()]
+    # Deterministic web resolvers (OpenML/UCI) run after the cheap local ones and before the
+    # agent's manual-upload fallback. Imported lazily to avoid a package-import cycle.
+    from .resolvers import OpenMLResolver, UCIResolver
+
+    return [DirectUrlResolver(), SklearnToyResolver(), OpenMLResolver(), UCIResolver()]
 
 
 class DataFetchAgent:

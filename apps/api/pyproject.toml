@@ -46,6 +46,7 @@ dependencies = [
     "bcrypt>=4.1",
     # workspace
     "laboratree-plugin-sdk",
+    "torch>=2.12.1",
 ]
 
 [dependency-groups]
