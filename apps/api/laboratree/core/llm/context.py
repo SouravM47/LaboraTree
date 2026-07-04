@@ -48,3 +48,24 @@ def use_llm_context(
         yield
     finally:
         _ctx.reset(token)
+
+
+@contextmanager
+def use_llm_operation(operation: str, *, lab: str | None = None) -> Iterator[None]:
+    """Refine ONLY the operation (and optionally lab) of the enclosing context — inherits its
+    project_id/org_id/run_id. Lets a multi-step agent label each sub-call (e.g. 'evidence.plan',
+    'evidence.synthesize', 'evidence.variables') so every LLM call is individually observable."""
+    cur = _ctx.get()
+    token = _ctx.set(
+        LLMContext(
+            lab=lab or cur.lab,
+            operation=operation,
+            project_id=cur.project_id,
+            run_id=cur.run_id,
+            org_id=cur.org_id,
+        )
+    )
+    try:
+        yield
+    finally:
+        _ctx.reset(token)

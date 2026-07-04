@@ -6,9 +6,15 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from laboratree.core.search import SearchHit
+from laboratree.core.search import SearchHit, looks_like_data_url
 from laboratree.labs.ideation.coscientist import run_ideation, tournament
-from laboratree.labs.ideation.evidence import brainstorm, gather_evidence, plan_queries
+from laboratree.labs.ideation.data_hunt import hunt_datasets
+from laboratree.labs.ideation.evidence import (
+    brainstorm,
+    extract_variables,
+    gather_evidence,
+    plan_queries,
+)
 from laboratree.main import app
 
 
@@ -79,14 +85,21 @@ def test_ideation_api(monkeypatch):
 def _fake_evidence_complete(system: str, prompt: str, **kw) -> str:
     if "plan web searches" in system:
         return '["women literacy rural development study", "female education economic growth India"]'
+    if "research methodologist" in system:  # the dedicated exhaustive variable pass
+        return (
+            '[{"name": "female_literacy_rate", "role": "independent", "measure": "% women 15+ literate",'
+            ' "expected_direction": "positive", "source_refs": [1], "rationale": "treatment"},'
+            ' {"name": "rural_development_index", "role": "dependent", "measure": "composite index",'
+            ' "expected_direction": "positive", "source_refs": [2], "rationale": "outcome"},'
+            ' {"name": "household_income", "role": "confounder", "measure": "INR/month",'
+            ' "expected_direction": "positive", "source_refs": [], "rationale": "standard control"}]'
+        )
     if "evidence brief" in system:
         return (
             '{"summary": "Multiple studies link female literacy to development [1][2].",'
             ' "stance": "supports", "confidence": 0.7,'
             ' "key_findings": [{"finding": "Literacy correlates with income", "sources": [1]}],'
             ' "insights": ["Effect may be mediated by health outcomes"],'
-            ' "variables_to_test": [{"name": "female_literacy_rate", "role": "independent",'
-            ' "rationale": "the treatment variable"}],'
             ' "gaps": ["Few causal (RCT) studies"]}'
         )
     return "ok"
@@ -114,7 +127,27 @@ def test_gather_evidence_builds_cited_brief():
     assert out["sources"] and out["sources"][0]["url"] == "https://example.org/a"
     brief = out["brief"]
     assert brief["stance"] == "supports"
-    assert brief["variables_to_test"][0]["name"] == "female_literacy_rate"
+    # variables now come from the dedicated exhaustive pass: grounded (source_refs) + standard controls
+    vs = brief["variables_to_test"]
+    assert vs[0]["name"] == "female_literacy_rate"
+    roles = {v["role"] for v in vs}
+    assert {"independent", "dependent", "confounder"} <= roles     # spans roles, not just treatment
+    assert any(v["source_refs"] for v in vs)                       # at least one tied to a study
+    assert all("measure" in v and "expected_direction" in v for v in vs)
+
+
+def test_extract_variables_is_exhaustive_and_grounded():
+    sources = [{"title": "A", "url": "https://x/a", "snippet": "..."},
+               {"title": "B", "url": "https://x/b", "snippet": "..."}]
+    vs = extract_variables("female literacy -> development", sources, _fake_evidence_complete)
+    assert len(vs) >= 3
+    assert {"independent", "dependent", "confounder"} <= {v["role"] for v in vs}
+    # a standard control has no source_refs; a study-grounded one does
+    assert any(not v["source_refs"] for v in vs) and any(v["source_refs"] for v in vs)
+
+
+def test_extract_variables_empty_without_sources():
+    assert extract_variables("h", [], _fake_evidence_complete) == []
 
 
 def test_gather_evidence_handles_no_sources():
@@ -155,3 +188,157 @@ def test_brainstorm_degrades_on_llm_error():
 
     out = brainstorm("h", {}, [], "q?", [], _boom)
     assert out["answer"]  # non-empty fallback, never raises
+
+
+# ---------------- data hunt ----------------
+
+def test_looks_like_data_url():
+    assert looks_like_data_url("https://example.org/data/file.csv")
+    assert looks_like_data_url("https://raw.githubusercontent.com/x/y/main/anything")
+    assert not looks_like_data_url("https://example.org/blog/article")
+
+
+def _fake_data_complete(system: str, prompt: str, **kw) -> str:
+    if "FIND DOWNLOADABLE DATASETS" in system:
+        return '["female literacy rate India district dataset", "rural development index India data"]'
+    if "data-sourcing expert" in system:
+        # [1] is a real dataset, [2] is an article to be filtered out
+        return (
+            '[{"index": 1, "is_dataset": true, "relevance": 0.9, "why": "district literacy panel",'
+            ' "variables_covered": ["female_literacy_rate"], "access": "direct_download"},'
+            ' {"index": 2, "is_dataset": false, "relevance": 0.1, "why": "news article",'
+            ' "variables_covered": [], "access": "unknown"}]'
+        )
+    return "[]"
+
+
+def _fake_data_search(query: str, count: int):
+    return [
+        SearchHit(title="India literacy data.csv", url="https://data.gov/india_literacy.csv",
+                  description="District-level literacy.", source="brave"),
+        SearchHit(title="Opinion: literacy matters", url="https://news.example.com/op-ed",
+                  description="An article.", source="brave"),
+    ]
+
+
+def test_hunt_datasets_ranks_real_datasets_and_filters_articles():
+    out = hunt_datasets(
+        "female literacy -> rural development",
+        ["female_literacy_rate", "rural_development_index"],
+        search_fn=_fake_data_search, complete_fn=_fake_data_complete, max_candidates=10,
+    )
+    urls = [c["url"] for c in out["candidates"]]
+    assert "https://data.gov/india_literacy.csv" in urls          # dataset kept
+    assert "https://news.example.com/op-ed" not in urls           # article filtered
+    top = out["candidates"][0]
+    assert top["direct_download"] is True and top["relevance"] >= 0.5
+
+
+# ---------------- auto-experiment (deep agent skill selection) ----------------
+
+def test_detect_task():
+    import pandas as pd
+    from laboratree.labs.ideation.auto_experiment import detect_task
+
+    clf = pd.DataFrame({"x": range(20), "y": ["a", "b"] * 10})
+    reg = pd.DataFrame({"x": range(20), "y": [float(i) for i in range(20)]})
+    assert detect_task(clf, "y") == "classification"
+    assert detect_task(reg, "y") == "regression"
+
+
+def test_plan_experiment_validates_and_falls_back():
+    from laboratree.labs.ideation.auto_experiment import plan_experiment
+
+    avail = ["model.ml.logistic_regression", "model.ml.random_forest", "model.ml.gradient_boosting"]
+
+    def good(system, prompt, **kw):
+        return '{"preprocessing": "impute+scale", "models": ["model.ml.random_forest"], "rationale": "trees handle mixed types"}'
+
+    plan = plan_experiment({"n_rows": 100}, "h", "classification", avail, good)
+    assert plan["models"] == ["model.ml.random_forest"]
+
+    # bad LLM output → fall back to the task-appropriate default pool (all in the available list)
+    plan2 = plan_experiment({"n_rows": 100}, "h", "classification", avail, lambda s, p, **k: "garbage")
+    assert plan2["models"] and all(m in avail for m in plan2["models"])
+
+
+def test_rank_and_summarize_pick_best_by_metric():
+    from laboratree.labs.ideation.auto_experiment import rank_results, summarize_results
+
+    results = [
+        {"component": "model.ml.logistic_regression", "metrics": {"f1": 0.70, "accuracy": 0.72}},
+        {"component": "model.ml.random_forest", "metrics": {"f1": 0.88, "accuracy": 0.90}},
+    ]
+    assert rank_results(results, "classification")[0]["component"] == "model.ml.random_forest"
+
+    # deterministic fallback when the LLM can't structure a verdict
+    out = summarize_results("h", "classification", results, lambda s, p, **k: "not json")
+    assert out["best_model"] == "model.ml.random_forest"
+
+
+def _auto_experiment_llm(system: str, prompt: str, **kw) -> str:
+    if "ML strategist" in system:
+        return '{"preprocessing": "impute+scale", "models": ["model.ml.logistic_regression", "model.ml.random_forest"], "rationale": "baselines"}'
+    if "research analyst" in system:
+        return '{"best_model": "model.ml.random_forest", "verdict": "RF fits best.", "insights": ["fit is not causation"]}'
+    return "{}"
+
+
+def test_auto_experiment_runs_real_models_end_to_end(monkeypatch):
+    import asyncio
+
+    import pandas as pd
+    from laboratree.core.db.postgres import sessionmaker
+    from laboratree.core.repro import dataframe_hash
+    from laboratree.core.storage import get_blob_store
+    from laboratree.labs.ideation import llm as ideation_llm
+    from laboratree.projects.models import Dataset
+
+    monkeypatch.setattr(ideation_llm, "default_complete", _auto_experiment_llm)
+
+    # a small but learnable classification dataset
+    rng = __import__("random").Random(0)
+    rows = [{"x1": rng.gauss(0, 1), "x2": rng.gauss(0, 1)} for _ in range(80)]
+    for r in rows:
+        r["y"] = "yes" if (r["x1"] + r["x2"] > 0) else "no"
+    df = pd.DataFrame(rows)
+
+    with TestClient(app) as client:
+        email = f"user-{uuid.uuid4().hex[:10]}@example.com"
+        tok = client.post("/api/auth/register",
+                          json={"email": email, "password": "supersecret1", "full_name": "Q"}).json()
+        h = {"Authorization": f"Bearer {tok['access_token']}"}
+        pid = client.post("/api/projects", json={"name": "AutoX"}, headers=h).json()["id"]
+
+        # insert a Dataset directly (org-scoped) + its blob
+        key = f"test/{uuid.uuid4()}.csv"
+        get_blob_store().put(key, df.to_csv(index=False).encode())
+
+        async def _insert() -> str:
+            async with sessionmaker()() as s:
+                ds = Dataset(org_id=uuid.UUID(tok["org_id"]), project_id=uuid.UUID(pid),
+                             name="autox.csv", storage_key=key, content_hash=dataframe_hash(df),
+                             n_rows=len(df), n_cols=df.shape[1])
+                s.add(ds)
+                await s.flush()
+                did = str(ds.id)
+                await s.commit()
+                return did
+
+        dataset_id = asyncio.run(_insert())
+
+        r = client.post(f"/api/projects/{pid}/ideation/auto-experiment", headers=h,
+                        json={"dataset_id": dataset_id, "target": "y", "hypothesis": "x1+x2 predicts y"})
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["task"] == "classification"
+        assert body["plan"]["models"]                                   # planner chose models
+        ran = [x for x in body["results"] if x.get("metrics")]
+        assert ran, body["results"]                                     # real components produced metrics
+        assert all(x.get("run_id") for x in ran)                        # each is an Evidence-locked run
+        assert body["summary"]["best_model"]                            # a verdict was produced
+        # the FULL pipeline ran as Evidence-locked steps: eda -> leakage -> preprocess -> model(s) -> red_team
+        step_kinds = {s["step"] for s in body["pipeline"]}
+        assert {"eda", "leakage", "preprocess", "model"} <= step_kinds
+        assert "redteam" in body and body["redteam"] is not None        # winner was stress-tested
+        assert all("run_id" in s for s in body["pipeline"] if "error" not in s)

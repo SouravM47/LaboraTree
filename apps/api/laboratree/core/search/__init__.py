@@ -126,4 +126,23 @@ def search_available() -> bool:
     return bool(settings.brave_search_api_key or settings.serpapi_key)
 
 
-__all__ = ["SearchHit", "search_available", "web_search"]
+# Hosts that commonly serve a raw, directly-downloadable data file.
+_RAW_DATA_HOSTS = (
+    "raw.githubusercontent.com", "zenodo.org", "figshare.com", "ndownloader.figshare.com",
+    "data.gov", "gist.githubusercontent.com", "media.githubusercontent.com",
+    "storage.googleapis.com", "s3.amazonaws.com", "ourworldindata.org",
+)
+_DATA_SUFFIX = (".csv", ".tsv", ".data", ".xlsx", ".xls", ".json", ".parquet")
+
+
+def looks_like_data_url(url: str) -> bool:
+    """Heuristic: does this URL point at a directly-downloadable data file (vs a portal/article)?
+    Shared by the dataset fetch resolver and the Ideation data hunt."""
+    low = (url or "").lower().split("?")[0]
+    if low.endswith(_DATA_SUFFIX):
+        return True
+    host = low.split("//")[-1].split("/")[0]
+    return any(h in host for h in _RAW_DATA_HOSTS)
+
+
+__all__ = ["SearchHit", "looks_like_data_url", "search_available", "web_search"]
