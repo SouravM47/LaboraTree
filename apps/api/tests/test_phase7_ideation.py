@@ -236,6 +236,39 @@ def test_hunt_datasets_ranks_real_datasets_and_filters_articles():
 
 # ---------------- auto-experiment (deep agent skill selection) ----------------
 
+def test_build_master_concatenates_matching_schemas():
+    from laboratree.labs.ideation.master_dataset import build_master
+
+    a = b"age,income,y\n30,100,1\n40,200,0\n"
+    b = b"age,income,y\n50,300,1\n60,400,0\n"
+    diff = b"totally,different\n1,2\n3,4\n"
+    blobs = {
+        "https://x/a.csv": a, "https://x/b.csv": b, "https://x/c.csv": diff,
+        "https://x/bad.csv": b"<html>not data</html>",
+    }
+    candidates = [
+        {"url": "https://x/a.csv", "title": "A", "direct_download": True},
+        {"url": "https://x/b.csv", "title": "B", "direct_download": True},
+        {"url": "https://x/c.csv", "title": "C", "direct_download": True},
+        {"url": "https://x/bad.csv", "title": "bad", "direct_download": True},
+        {"url": "https://x/portal", "title": "portal", "direct_download": False},  # skipped
+    ]
+    out = build_master(candidates, fetch_fn=lambda u: blobs.get(u))
+    assert out["master"] is not None
+    # a + b share a schema and are the largest group → concatenated to 4 rows
+    assert len(out["master"]) == 4 and list(out["master"].columns) == ["age", "income", "y"]
+    statuses = {t["url"]: t["status"] for t in out["tables"]}
+    assert statuses["https://x/bad.csv"] == "not_tabular"
+    assert "https://x/portal" not in statuses                      # non-direct never downloaded
+
+
+def test_build_master_handles_nothing_usable():
+    from laboratree.labs.ideation.master_dataset import build_master
+
+    out = build_master([{"url": "https://x/a", "direct_download": True}], fetch_fn=lambda u: None)
+    assert out["master"] is None and "No candidate" in out["note"]
+
+
 def test_detect_task():
     import pandas as pd
     from laboratree.labs.ideation.auto_experiment import detect_task

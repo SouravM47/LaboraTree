@@ -24,9 +24,11 @@ from ..labs.ideation.auto_experiment import (
     rank_results,
     summarize_results,
 )
+from ..core.repro import dataframe_hash
 from ..labs.ideation.coscientist import run_ideation
 from ..labs.ideation.data_hunt import hunt_datasets
 from ..labs.ideation.evidence import brainstorm, gather_evidence
+from ..labs.ideation.master_dataset import build_master
 from ..projects.models import Dataset, IdeationSession, IdeationStatus, Project
 
 router = APIRouter(prefix="/api", tags=["ideation"])
@@ -57,10 +59,36 @@ class DataHuntIn(BaseModel):
     max_candidates: int = Field(default=10, ge=4, le=20)
 
 
+class BuildDatasetIn(BaseModel):
+    candidates: list[dict[str, Any]]          # from the data-hunt result
+    name: str = "master (web)"
+
+
 class AutoExperimentIn(BaseModel):
     dataset_id: uuid.UUID
     target: str
     hypothesis: str = ""
+
+
+def _download_bytes(url: str) -> bytes | None:
+    """One polite, size-capped GET for the master-dataset builder. Never raises."""
+    import httpx
+
+    try:
+        with httpx.stream("GET", url, timeout=20.0, follow_redirects=True,
+                          headers={"User-Agent": "Laboratree/0.1 (dataset builder)"}) as resp:
+            if resp.status_code != 200:
+                return None
+            cap = 25 * 1024 * 1024
+            chunks, total = [], 0
+            for chunk in resp.iter_bytes():
+                total += len(chunk)
+                if total > cap:
+                    return None
+                chunks.append(chunk)
+            return b"".join(chunks)
+    except Exception:
+        return None
 
 
 def _step_summary(kind: str, outputs: dict[str, Any] | None) -> dict[str, Any]:
@@ -219,6 +247,46 @@ async def data_hunt(
             )
 
     return await asyncio.to_thread(_run)
+
+
+@router.post("/projects/{project_id}/ideation/build-dataset", status_code=201)
+async def build_dataset(
+    project_id: uuid.UUID, body: BuildDatasetIn, principal: PrincipalDep, session: SessionDep
+) -> dict[str, Any]:
+    """Download the data-hunt's direct-download candidates and consolidate them into ONE master
+    dataset (schema-compatible sources concatenated; others kept as separate tables), persisted as a
+    project Dataset the auto-experiment can run on. Honest — never fabricates a join."""
+    import asyncio
+
+    await _require_project(session, principal, project_id)
+    if not any(c.get("direct_download") for c in body.candidates):
+        raise HTTPException(
+            status_code=422,
+            detail="none of the candidates are directly downloadable — open the portal links and "
+            "upload the data, or run the data hunt again",
+        )
+
+    result = await asyncio.to_thread(build_master, body.candidates, _download_bytes)
+    master = result.get("master")
+    if master is None:
+        raise HTTPException(status_code=422, detail=result.get("note", "no usable data downloaded"))
+
+    key = f"ideation/{project_id}/{uuid.uuid4()}/master.csv"
+    get_blob_store().put(key, master.to_csv(index=False).encode())
+    ds = Dataset(
+        org_id=principal.org_id, project_id=project_id, name=body.name, storage_key=key,
+        content_hash=dataframe_hash(master), n_rows=int(len(master)), n_cols=int(master.shape[1]),
+    )
+    session.add(ds)
+    await session.flush()
+    await session.commit()
+    await session.refresh(ds)
+    return {
+        "dataset_id": str(ds.id), "name": ds.name,
+        "n_rows": ds.n_rows, "n_cols": ds.n_cols,
+        "columns": [str(c) for c in master.columns],
+        "tables": result["tables"], "note": result["note"],
+    }
 
 
 @router.post("/projects/{project_id}/ideation/auto-experiment", status_code=201)
