@@ -63,6 +63,23 @@ class AutoExperimentIn(BaseModel):
     hypothesis: str = ""
 
 
+def _step_summary(kind: str, outputs: dict[str, Any] | None) -> dict[str, Any]:
+    """Compact, JSON-safe summary of a pipeline component's outputs (drops the DataFrame etc.)."""
+    outputs = outputs or {}
+    if kind == "eda":
+        p = outputs.get("profile") or {}
+        return {k: p.get(k) for k in ("n_rows", "n_cols", "total_missing") if k in p}
+    if kind == "leakage":
+        return {"findings": len(outputs.get("findings") or [])}
+    if kind == "preprocess":
+        ds = outputs.get("dataset")
+        shape = [int(ds.shape[0]), int(ds.shape[1])] if ds is not None else None
+        return {"shape": shape}
+    if kind == "red_team":
+        return {k: outputs.get(k) for k in ("verdict", "base_metric", "robustness_drop") if k in outputs}
+    return {k: v for k, v in outputs.items() if isinstance(v, (int, float, str, bool))}
+
+
 class SessionOut(BaseModel):
     id: uuid.UUID
     goal: str
@@ -231,31 +248,65 @@ async def auto_experiment(
     task = detect_task(df, body.target)
     profile = profile_dataset(df, body.target)
     available = sorted(s.id for s in REGISTRY.specs() if s.id.startswith("model.ml."))
+    pipeline: list[dict[str, Any]] = []
+
+    async def _step(kind: str, component_id: str, params: dict, dataset) -> Any:
+        """Run one pipeline component as a tracked, Evidence-locked Run; record it in `pipeline`."""
+        try:
+            res = await execute_component(
+                session, org_id=principal.org_id, project_id=project_id,
+                component_id=component_id, params=params,
+                inputs={"dataset": dataset}, lab="ideation.auto_experiment",
+            )
+        except RunFailed as exc:
+            pipeline.append({"step": kind, "component": component_id, "error": str(exc)})
+            return None
+        pipeline.append({
+            "step": kind, "component": component_id, "run_id": str(res.run.id),
+            "evidence_count": res.evidence_count, "outputs": _step_summary(kind, res.outputs),
+        })
+        return res
 
     with use_llm_context("ideation", "auto_experiment", project_id=project_id, org_id=principal.org_id):
+        # 1) EDA  2) leakage check (a trust differentiator) — both on the raw data
+        await _step("eda", "analyzer.eda_profile", {}, df)
+        leak = await _step("leakage", "analyzer.leakage_sentinel", {"target": body.target}, df)
+        leak_findings = (leak.outputs.get("findings") if leak else []) or []
+
+        # 3) preprocess — actually run mean-impute and feed the CLEANED frame forward
+        pre = await _step("preprocess", "transform.mean_impute", {}, df)
+        model_df = pre.outputs.get("dataset", df) if pre else df
+
+        # 4) model selection — the LLM picks, each runs as a real Evidence-locked component
         plan = await asyncio.to_thread(
             plan_experiment, profile, body.hypothesis, task, available, ideation_llm.default_complete
         )
         results: list[dict[str, Any]] = []
         for cid in plan["models"]:
-            try:
-                res = await execute_component(
-                    session, org_id=principal.org_id, project_id=project_id,
-                    component_id=cid, params={"target": body.target},
-                    inputs={"dataset": df}, lab="ideation.auto_experiment",
-                )
-                results.append({
-                    "component": cid, "metrics": res.outputs.get("metrics", {}),
-                    "run_id": str(res.run.id), "evidence_count": res.evidence_count,
-                })
-            except RunFailed as exc:
-                results.append({"component": cid, "metrics": {}, "error": str(exc)})
-        scored = [r for r in results if r.get("metrics")]
+            res = await _step("model", cid, {"target": body.target}, model_df)
+            results.append({
+                "component": cid,
+                "metrics": (res.outputs.get("metrics", {}) if res else {}),
+                "run_id": (str(res.run.id) if res else None),
+            })
+        ranked = rank_results(results, task)
+
+        # 5) red-team the winning model (a trust differentiator)
+        redteam = None
+        if ranked and ranked[0].get("metrics"):
+            rt = await _step("red_team", "critic.red_team", {"target": body.target}, model_df)
+            redteam = _step_summary("red_team", rt.outputs) if rt else None
+
+        # 6) grounded verdict — factoring in leakage + robustness
+        notes = f"Leakage findings: {len(leak_findings)}."
+        if redteam:
+            notes += f" Red-team verdict: {redteam.get('verdict')}, robustness_drop={redteam.get('robustness_drop')}."
         summary = await asyncio.to_thread(
-            summarize_results, body.hypothesis, task, scored, ideation_llm.default_complete
+            summarize_results, body.hypothesis, task, [r for r in results if r.get("metrics")],
+            ideation_llm.default_complete, notes,
         )
 
     return {
-        "task": task, "profile": profile, "plan": plan,
-        "results": rank_results(results, task), "summary": summary,
+        "task": task, "profile": profile, "plan": plan, "pipeline": pipeline,
+        "results": ranked, "leakage": leak_findings, "redteam": redteam, "summary": summary,
     }

@@ -117,24 +117,33 @@ def rank_results(results: list[dict[str, Any]], task: str) -> list[dict[str, Any
 
 
 def summarize_results(
-    hypothesis: str, task: str, results: list[dict[str, Any]], complete_fn: CompleteFn
+    hypothesis: str,
+    task: str,
+    results: list[dict[str, Any]],
+    complete_fn: CompleteFn,
+    notes: str = "",
 ) -> dict[str, Any]:
-    """Read the real per-model metrics and write a grounded verdict + insights for the hypothesis.
-    Deterministic fallback picks the best model by the primary metric."""
+    """Read the real per-model metrics (and any trust notes — leakage findings, red-team verdict) and
+    write a grounded verdict + insights for the hypothesis. Deterministic fallback picks the best
+    model by the primary metric."""
     ranked = rank_results(results, task)
     best = ranked[0]["component"] if ranked else ""
     if not results:
         return {"best_model": "", "verdict": "No models were run.", "insights": []}
     system = (
         "You are a research analyst. Given several models and their REAL metrics on data used to test "
-        "the hypothesis, state which performed best and what it implies for the hypothesis — be honest "
-        "that predictive fit is not causal proof. Return ONLY JSON {best_model (component id), verdict "
+        "the hypothesis (plus any leakage/robustness notes), state which performed best and what it "
+        "implies for the hypothesis — be honest that predictive fit is not causal proof, and factor in "
+        "any leakage or robustness warnings. Return ONLY JSON {best_model (component id), verdict "
         "(2-3 sentences), insights (array of short strings)}."
     )
     lines = "\n".join(f"- {r['component']}: {r.get('metrics')}" for r in ranked)
+    trust = f"\nTrust checks:\n{notes}" if notes else ""
     try:
         with use_llm_operation("auto_experiment.summarize"):
-            parsed = _parse_json(complete_fn(system, f"Hypothesis: {hypothesis}\nTask: {task}\nResults:\n{lines}"))
+            parsed = _parse_json(
+                complete_fn(system, f"Hypothesis: {hypothesis}\nTask: {task}\nResults:\n{lines}{trust}")
+            )
     except Exception as exc:
         log.info("summarize_results failed: %s", exc)
         parsed = None

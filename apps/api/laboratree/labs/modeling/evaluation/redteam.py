@@ -20,7 +20,8 @@ _SEED = 1729
 def _is_classification(y) -> bool:
     import pandas as pd
 
-    if y.dtype == object or str(y.dtype).startswith("category"):
+    # pandas 2.x infers the "str" dtype (not object) for text columns — treat all as categorical.
+    if y.dtype == object or str(y.dtype).startswith(("category", "str")):
         return True
     return bool(pd.api.types.is_integer_dtype(y) and y.nunique() <= 10)
 
@@ -69,7 +70,9 @@ class RedTeamCritic(Component):
 
         y_raw = df[target]
         task = "classification" if _is_classification(y_raw) else "regression"
-        y = y_raw.astype("category").cat.codes if (task == "classification" and y_raw.dtype == object) else y_raw
+        # encode any non-numeric class labels (object/str/category), not just object dtype
+        needs_encode = task == "classification" and not pd.api.types.is_numeric_dtype(y_raw)
+        y = y_raw.astype("category").cat.codes if needs_encode else y_raw
         X = df[feats]
         strat = y if task == "classification" and y.nunique() > 1 else None
         Xtr, Xte, ytr, yte = train_test_split(

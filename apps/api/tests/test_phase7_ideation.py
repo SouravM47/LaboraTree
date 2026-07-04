@@ -335,5 +335,10 @@ def test_auto_experiment_runs_real_models_end_to_end(monkeypatch):
         assert body["plan"]["models"]                                   # planner chose models
         ran = [x for x in body["results"] if x.get("metrics")]
         assert ran, body["results"]                                     # real components produced metrics
-        assert all("run_id" in x for x in ran)                          # each is an Evidence-locked run
+        assert all(x.get("run_id") for x in ran)                        # each is an Evidence-locked run
         assert body["summary"]["best_model"]                            # a verdict was produced
+        # the FULL pipeline ran as Evidence-locked steps: eda -> leakage -> preprocess -> model(s) -> red_team
+        step_kinds = {s["step"] for s in body["pipeline"]}
+        assert {"eda", "leakage", "preprocess", "model"} <= step_kinds
+        assert "redteam" in body and body["redteam"] is not None        # winner was stress-tested
+        assert all("run_id" in s for s in body["pipeline"] if "error" not in s)
