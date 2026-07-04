@@ -15,6 +15,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
+from ...core.llm.context import use_llm_operation
 from ...core.search import looks_like_data_url
 from .evidence import _parse_json  # shared tolerant JSON extractor (same Lab)
 
@@ -42,7 +43,8 @@ def plan_data_queries(
         f"array of {n} short query strings covering the variables: {var_txt}."
     )
     try:
-        parsed = _parse_json(complete_fn(system, f"Hypothesis: {hypothesis}"))
+        with use_llm_operation("data_hunt.plan_queries"):
+            parsed = _parse_json(complete_fn(system, f"Hypothesis: {hypothesis}"))
         queries = [str(q).strip() for q in parsed if str(q).strip()] if isinstance(parsed, list) else []
     except Exception as exc:
         log.info("data query planning failed: %s", exc)
@@ -96,7 +98,8 @@ def _annotate(
         "Judge ALL results."
     )
     var_txt = ", ".join(variables) if variables else "(infer from the hypothesis)"
-    parsed = _parse_json(complete_fn(system, f"Hypothesis: {hypothesis}\nVariables: {var_txt}\n\n{numbered}"))
+    with use_llm_operation("data_hunt.annotate"):
+        parsed = _parse_json(complete_fn(system, f"Hypothesis: {hypothesis}\nVariables: {var_txt}\n\n{numbered}"))
     by_index: dict[int, dict] = {}
     if isinstance(parsed, list):
         for a in parsed:

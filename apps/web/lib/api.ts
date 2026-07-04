@@ -219,7 +219,15 @@ export type DatasetPreview = {
   synthetic: boolean;
   truncated: boolean;
 };
-export type PreprocessOp = "impute_mean" | "impute_median" | "standardize" | "minmax";
+export type PreprocessOp =
+  | "impute_mean"
+  | "impute_median"
+  | "standardize"
+  | "minmax"
+  | "drop_missing_rows"
+  | "filter_rows"
+  | "encode";
+export type RowFilter = { column: string; cmp: "lt" | "le" | "gt" | "ge" | "eq" | "ne"; value: number };
 export type ColStats = { mean: number; median: number; std: number; min: number; max: number };
 export type ColProfile = {
   name: string;
@@ -371,6 +379,9 @@ export type PreprocessPreview = {
   changed: string[][];
   stats: Record<string, ColStats>;
   summary: string;
+  removed?: boolean[] | null; // row ops: which sampled rows get dropped (red vs green)
+  n_removed_total?: number | null;
+  n_total?: number | null;
 };
 export type Experiment = {
   id: string;
@@ -437,7 +448,19 @@ export type EvidenceSource = {
 };
 export type TestVariable = {
   name: string;
-  role: "independent" | "target" | "control" | string;
+  role:
+    | "independent"
+    | "dependent"
+    | "target"
+    | "control"
+    | "confounder"
+    | "mediator"
+    | "moderator"
+    | "instrument"
+    | string;
+  measure?: string; // how to operationalize it (proxy/unit/scale)
+  expected_direction?: "positive" | "negative" | "none" | "unclear" | string;
+  source_refs?: number[]; // which [n] sources motivate it
   rationale?: string;
 };
 export type EvidenceBrief = {
@@ -616,6 +639,13 @@ export const Api = {
     ),
   downloadDataset: (datasetId: string, filename: string) =>
     downloadBlob(`/api/datasets/${datasetId}/download`, filename),
+  preprocessPreviewFilter: (datasetId: string, f: RowFilter, rows = 8) =>
+    apiPost<PreprocessPreview>(
+      `/api/datasets/${datasetId}/preprocess-preview?op=filter_rows&rows=${rows}` +
+        `&column=${encodeURIComponent(f.column)}&cmp=${f.cmp}&value=${f.value}`,
+    ),
+  refetchData: (experimentId: string) =>
+    apiPost<Experiment>(`/api/experiments/${experimentId}/fetch-data`),
   preprocessPreview: (datasetId: string, op: PreprocessOp, rows = 6) =>
     apiPost<PreprocessPreview>(
       `/api/datasets/${datasetId}/preprocess-preview?op=${op}&rows=${rows}`,

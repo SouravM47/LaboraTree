@@ -282,19 +282,58 @@ function EvidenceBriefView({
       {brief.variables_to_test?.length > 0 && (
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-forest">
-            Variables to test next
+            Variables to test next{" "}
+            <span className="font-normal text-muted">
+              ({brief.variables_to_test.length} — grounded in the studies + standard controls)
+            </span>
           </p>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            {brief.variables_to_test.map((v, i) => (
-              <span
-                key={i}
-                title={v.rationale}
-                className="rounded-lg border border-line bg-white px-2 py-0.5 text-xs text-ink"
-              >
-                <b className="text-forest">{v.name}</b>
-                <span className="ml-1 text-muted">· {v.role}</span>
-              </span>
-            ))}
+          <div className="mt-1 overflow-hidden rounded-lg border border-line">
+            <table className="w-full text-xs">
+              <thead className="bg-bg text-muted">
+                <tr>
+                  <th className="px-2 py-1 text-left font-medium">Variable</th>
+                  <th className="px-2 py-1 text-left font-medium">Role</th>
+                  <th className="px-2 py-1 text-left font-medium">Measure</th>
+                  <th className="px-2 py-1 text-left font-medium">Dir.</th>
+                  <th className="px-2 py-1 text-left font-medium">Src</th>
+                </tr>
+              </thead>
+              <tbody>
+                {brief.variables_to_test.map((v, i) => (
+                  <tr key={i} className="border-t border-line/60" title={v.rationale}>
+                    <td className="px-2 py-1 font-medium text-forest">{v.name}</td>
+                    <td className="px-2 py-1 text-muted">{v.role}</td>
+                    <td className="px-2 py-1 text-ink">{v.measure || "—"}</td>
+                    <td className="px-2 py-1">
+                      {v.expected_direction === "positive"
+                        ? "↑"
+                        : v.expected_direction === "negative"
+                          ? "↓"
+                          : v.expected_direction === "none"
+                            ? "0"
+                            : "?"}
+                    </td>
+                    <td className="px-2 py-1 text-leaf">
+                      {(v.source_refs ?? []).map((n, j) => {
+                        const src = sources[n - 1];
+                        return (
+                          <a
+                            key={j}
+                            href={src?.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={src?.title}
+                            className="mr-0.5 hover:underline"
+                          >
+                            [{n}]
+                          </a>
+                        );
+                      })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

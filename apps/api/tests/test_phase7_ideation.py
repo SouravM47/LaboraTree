@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient
 from laboratree.core.search import SearchHit, looks_like_data_url
 from laboratree.labs.ideation.coscientist import run_ideation, tournament
 from laboratree.labs.ideation.data_hunt import hunt_datasets
-from laboratree.labs.ideation.evidence import brainstorm, gather_evidence, plan_queries
+from laboratree.labs.ideation.evidence import (
+    brainstorm,
+    extract_variables,
+    gather_evidence,
+    plan_queries,
+)
 from laboratree.main import app
 
 
@@ -80,14 +85,21 @@ def test_ideation_api(monkeypatch):
 def _fake_evidence_complete(system: str, prompt: str, **kw) -> str:
     if "plan web searches" in system:
         return '["women literacy rural development study", "female education economic growth India"]'
+    if "research methodologist" in system:  # the dedicated exhaustive variable pass
+        return (
+            '[{"name": "female_literacy_rate", "role": "independent", "measure": "% women 15+ literate",'
+            ' "expected_direction": "positive", "source_refs": [1], "rationale": "treatment"},'
+            ' {"name": "rural_development_index", "role": "dependent", "measure": "composite index",'
+            ' "expected_direction": "positive", "source_refs": [2], "rationale": "outcome"},'
+            ' {"name": "household_income", "role": "confounder", "measure": "INR/month",'
+            ' "expected_direction": "positive", "source_refs": [], "rationale": "standard control"}]'
+        )
     if "evidence brief" in system:
         return (
             '{"summary": "Multiple studies link female literacy to development [1][2].",'
             ' "stance": "supports", "confidence": 0.7,'
             ' "key_findings": [{"finding": "Literacy correlates with income", "sources": [1]}],'
             ' "insights": ["Effect may be mediated by health outcomes"],'
-            ' "variables_to_test": [{"name": "female_literacy_rate", "role": "independent",'
-            ' "rationale": "the treatment variable"}],'
             ' "gaps": ["Few causal (RCT) studies"]}'
         )
     return "ok"
@@ -115,7 +127,27 @@ def test_gather_evidence_builds_cited_brief():
     assert out["sources"] and out["sources"][0]["url"] == "https://example.org/a"
     brief = out["brief"]
     assert brief["stance"] == "supports"
-    assert brief["variables_to_test"][0]["name"] == "female_literacy_rate"
+    # variables now come from the dedicated exhaustive pass: grounded (source_refs) + standard controls
+    vs = brief["variables_to_test"]
+    assert vs[0]["name"] == "female_literacy_rate"
+    roles = {v["role"] for v in vs}
+    assert {"independent", "dependent", "confounder"} <= roles     # spans roles, not just treatment
+    assert any(v["source_refs"] for v in vs)                       # at least one tied to a study
+    assert all("measure" in v and "expected_direction" in v for v in vs)
+
+
+def test_extract_variables_is_exhaustive_and_grounded():
+    sources = [{"title": "A", "url": "https://x/a", "snippet": "..."},
+               {"title": "B", "url": "https://x/b", "snippet": "..."}]
+    vs = extract_variables("female literacy -> development", sources, _fake_evidence_complete)
+    assert len(vs) >= 3
+    assert {"independent", "dependent", "confounder"} <= {v["role"] for v in vs}
+    # a standard control has no source_refs; a study-grounded one does
+    assert any(not v["source_refs"] for v in vs) and any(v["source_refs"] for v in vs)
+
+
+def test_extract_variables_empty_without_sources():
+    assert extract_variables("h", [], _fake_evidence_complete) == []
 
 
 def test_gather_evidence_handles_no_sources():
