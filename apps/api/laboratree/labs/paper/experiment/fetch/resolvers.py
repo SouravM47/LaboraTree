@@ -347,3 +347,84 @@ def _find_hit_list(node) -> list[dict]:
             if found:
                 return found
     return []
+
+
+# --- web-search resolver (Brave / SerpAPI) -------------------------------------------------
+
+# Hosts that commonly serve a raw, directly-downloadable data file.
+_RAW_DATA_HOSTS = (
+    "raw.githubusercontent.com", "github.com", "zenodo.org", "figshare.com",
+    "ndownloader.figshare.com", "data.gov", "gist.githubusercontent.com",
+    "media.githubusercontent.com", "storage.googleapis.com", "s3.amazonaws.com",
+)
+_DIRECT_DATA_SUFFIX = (".csv", ".tsv", ".data")
+
+
+def _looks_direct_data(url: str) -> bool:
+    low = url.lower().split("?")[0]
+    if low.endswith(_DIRECT_DATA_SUFFIX):
+        return True
+    host = re.sub(r"^https?://", "", low).split("/")[0]
+    return low.endswith(".csv") and any(h in host for h in _RAW_DATA_HOSTS)
+
+
+def _rank_url(url: str) -> tuple:
+    low = url.lower().split("?")[0]
+    host = re.sub(r"^https?://", "", low).split("/")[0]
+    return (
+        not low.endswith(".csv"),                       # .csv first
+        not any(h in host for h in _RAW_DATA_HOSTS),     # then raw data hosts
+        not low.endswith(_DIRECT_DATA_SUFFIX),           # then any direct data file
+    )
+
+
+class WebSearchResolver:
+    """Last-resort resolver: when the registries miss, search the open web (Brave→SerpAPI) for the
+    dataset's cited name and try to download a direct CSV/data link from the top hits. Honest by
+    design — only returns data that actually parses as CSV; otherwise None (→ manual-upload guidance).
+    """
+
+    name = "web_search"
+
+    def try_fetch(self, ref) -> "FetchResult | None":  # noqa: F821 - resolved at runtime below
+        try:
+            return self._resolve(ref)
+        except Exception:
+            log.exception("web_search resolver failed for %r", ref.name)
+            return None
+
+    def _resolve(self, ref):
+        from laboratree.core.search import search_available, web_search
+        from laboratree.labs.paper.experiment.fetch import FetchResult
+
+        if not search_available():
+            return None
+
+        name = re.sub(r"\s+", " ", ref.name).strip()
+        # A couple of targeted queries; the search call itself is one HTTP request each.
+        queries = [f"{name} dataset csv download", f"{name} dataset download"]
+        seen: set[str] = set()
+        candidates: list[str] = []
+        for q in queries:
+            for hit in web_search(q, count=8):
+                url = hit.url
+                if url and url not in seen and _looks_direct_data(url):
+                    seen.add(url)
+                    candidates.append(url)
+            if candidates:
+                break  # first query that yields direct-data links is enough
+
+        candidates.sort(key=_rank_url)
+        budget = _Budget()
+        for url in candidates[:4]:
+            raw = _http_get(url, budget)
+            if raw is None:
+                continue
+            if _looks_like_arff(raw):
+                raw = _arff_to_csv(raw)
+                if raw is None:
+                    continue
+            if _looks_like_csv(raw):
+                log.info("web_search resolved %r -> %s", ref.name, url)
+                return FetchResult(ref, raw, f"{_slug(ref.name)}.csv", self.name, url)
+        return None

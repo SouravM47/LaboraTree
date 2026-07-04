@@ -116,11 +116,18 @@ class DirectUrlResolver:
 
 
 def default_resolvers() -> list[Resolver]:
-    # Deterministic web resolvers (OpenML/UCI) run after the cheap local ones and before the
-    # agent's manual-upload fallback. Imported lazily to avoid a package-import cycle.
-    from .resolvers import OpenMLResolver, UCIResolver
+    # Local/cheap first, then the registries (OpenML/UCI), then an open-web search (Brave→SerpAPI)
+    # as the last automated attempt before the agent's manual-upload fallback. Lazy import avoids a
+    # package-import cycle. WebSearchResolver is a no-op when no search key is configured.
+    from .resolvers import OpenMLResolver, UCIResolver, WebSearchResolver
 
-    return [DirectUrlResolver(), SklearnToyResolver(), OpenMLResolver(), UCIResolver()]
+    return [
+        DirectUrlResolver(),
+        SklearnToyResolver(),
+        OpenMLResolver(),
+        UCIResolver(),
+        WebSearchResolver(),
+    ]
 
 
 class DataFetchAgent:

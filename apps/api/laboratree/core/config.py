@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     blob_backend: str = "local"
     blob_local_root: str = ""
 
+    # --- Web search (dataset + evidence discovery; used by the fetch agent & Ideation Lab) ---
+    # Keys live only in the gitignored .env. Provider order: brave first, serpapi fallback.
+    web_search_provider: str = "brave"        # "brave" | "serpapi" | "none"
+    brave_search_api_key: str = ""
+    serpapi_key: str = ""
+    web_search_max_results: int = 8
+
     # --- LLM observability ---
     llm_tracing: bool = True
     llm_price_per_1k: float | None = None      # optional cost estimate = tokens/1000 * this
