@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     semantic_scholar_enabled: bool = True
     semantic_scholar_api_key: str = ""
 
+    # --- Rate limiting + caching (Redis-backed; both fail open if Redis is down) ---
+    rate_limit_enabled: bool = True
+    ideation_cache_enabled: bool = True
+    ideation_cache_ttl_s: int = 86400          # cache evidence/data-hunt results for a day
+
     # --- LLM observability ---
     llm_tracing: bool = True
     llm_price_per_1k: float | None = None      # optional cost estimate = tokens/1000 * this

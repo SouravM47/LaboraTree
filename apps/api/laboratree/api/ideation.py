@@ -11,8 +11,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from ..agents.run_executor import RunFailed, execute_component
+from ..core.cache import cache_key, cached_json
+from ..core.config import settings
 from ..core.deps import PrincipalDep, SessionDep
 from ..core.llm.context import use_llm_context
+from ..core.ratelimit import rate_limited
 from ..core.registry import REGISTRY
 from ..core.search import research_available, research_search, search_available, web_search
 from ..core.storage import get_blob_store
@@ -182,7 +185,8 @@ def _evidence_context(brief: dict[str, Any]) -> str:
     return "\n".join(p for p in parts if p)
 
 
-@router.post("/projects/{project_id}/ideation/grounded", status_code=201)
+@router.post("/projects/{project_id}/ideation/grounded", status_code=201,
+             dependencies=[rate_limited("grounded", limit=10)])
 async def grounded_ideation(
     project_id: uuid.UUID, body: IdeationIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
@@ -253,13 +257,14 @@ async def get_session(
     return rec
 
 
-@router.post("/projects/{project_id}/ideation/evidence", status_code=201)
+@router.post("/projects/{project_id}/ideation/evidence", status_code=201,
+             dependencies=[rate_limited("evidence", limit=20)])
 async def evidence_hunt(
     project_id: uuid.UUID, body: EvidenceIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
     """Evidence hunt: search real academic databases (OpenAlex — free journals/studies) plus the open
     web for evidence bearing on a conceptual hypothesis, and return a cited, synthesized brief
-    (summary, stance, findings, insights, the variables to test next, gaps). Off the event loop."""
+    (summary, stance, findings, insights, the variables to test next, gaps). Cached per hypothesis."""
     import asyncio
 
     await _require_project(session, principal, project_id)
@@ -278,10 +283,12 @@ async def evidence_hunt(
                 max_sources=body.max_sources,
             )
 
-    return await asyncio.to_thread(_run)
+    key = cache_key("evidence", project_id, body.hypothesis.strip().lower(), body.max_sources)
+    return await cached_json(key, settings.ideation_cache_ttl_s, lambda: asyncio.to_thread(_run))
 
 
-@router.post("/projects/{project_id}/ideation/brainstorm")
+@router.post("/projects/{project_id}/ideation/brainstorm",
+             dependencies=[rate_limited("brainstorm", limit=40)])
 async def brainstorm_chat(
     project_id: uuid.UUID, body: BrainstormIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
@@ -301,12 +308,13 @@ async def brainstorm_chat(
     return await asyncio.to_thread(_run)
 
 
-@router.post("/projects/{project_id}/ideation/data-hunt", status_code=201)
+@router.post("/projects/{project_id}/ideation/data-hunt", status_code=201,
+             dependencies=[rate_limited("data_hunt", limit=20)])
 async def data_hunt(
     project_id: uuid.UUID, body: DataHuntIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
     """Find candidate datasets on the open web to test a hypothesis — ranked, annotated with why each
-    is relevant and whether it's directly downloadable."""
+    is relevant and whether it's directly downloadable. Cached per hypothesis + variables."""
     import asyncio
 
     await _require_project(session, principal, project_id)
@@ -324,10 +332,13 @@ async def data_hunt(
                 max_candidates=body.max_candidates,
             )
 
-    return await asyncio.to_thread(_run)
+    key = cache_key("data_hunt", project_id, body.hypothesis.strip().lower(),
+                    sorted(body.variables), body.max_candidates)
+    return await cached_json(key, settings.ideation_cache_ttl_s, lambda: asyncio.to_thread(_run))
 
 
-@router.post("/projects/{project_id}/ideation/push-to-paper-lab", status_code=201)
+@router.post("/projects/{project_id}/ideation/push-to-paper-lab", status_code=201,
+             dependencies=[rate_limited("import_papers", limit=8)])
 async def push_to_paper_lab(
     project_id: uuid.UUID, body: PushPapersIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
@@ -380,7 +391,8 @@ async def push_to_paper_lab(
     return {"imported": imported, "skipped": skipped}
 
 
-@router.post("/projects/{project_id}/ideation/build-dataset", status_code=201)
+@router.post("/projects/{project_id}/ideation/build-dataset", status_code=201,
+             dependencies=[rate_limited("build_dataset", limit=10)])
 async def build_dataset(
     project_id: uuid.UUID, body: BuildDatasetIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
@@ -420,7 +432,8 @@ async def build_dataset(
     }
 
 
-@router.post("/projects/{project_id}/ideation/auto-experiment", status_code=201)
+@router.post("/projects/{project_id}/ideation/auto-experiment", status_code=201,
+             dependencies=[rate_limited("auto_experiment", limit=10)])
 async def auto_experiment(
     project_id: uuid.UUID, body: AutoExperimentIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
