@@ -3,10 +3,12 @@
 import { useState } from "react";
 import {
   Api,
+  type AutoExperimentResult,
   type ChatTurn,
   type DataHuntResult,
   type EvidenceResult,
   type IdeationSession,
+  type MasterDatasetResult,
 } from "@/lib/api";
 
 export default function IdeationLab({ projectId }: { projectId: string }) {
@@ -468,15 +470,251 @@ function DataHunt({ projectId, result }: { projectId: string; result: EvidenceRe
               ))}
             </ul>
           )}
-          <button
-            onClick={() => setData(null)}
-            className="text-xs text-muted hover:text-forest"
-          >
-            ↺ search again
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setData(null)}
+              className="text-xs text-muted hover:text-forest"
+            >
+              ↺ search again
+            </button>
+          </div>
+
+          {data.candidates.some((c) => c.direct_download) && (
+            <BuildAndExperiment
+              projectId={projectId}
+              candidates={data.candidates}
+              hypothesis={result.hypothesis}
+            />
+          )}
         </div>
       )}
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+/* ---- web data -> master dataset -> auto-experiment (the deep-agent tail) ---- */
+
+function BuildAndExperiment({
+  projectId,
+  candidates,
+  hypothesis,
+}: {
+  projectId: string;
+  candidates: DataHuntResult["candidates"];
+  hypothesis: string;
+}) {
+  const [master, setMaster] = useState<MasterDatasetResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function build() {
+    setBusy(true);
+    setError(null);
+    try {
+      setMaster(await Api.buildDataset(projectId, candidates));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "build failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-leaf/40 bg-leaf/5 p-2">
+      {!master ? (
+        <>
+          <button
+            onClick={build}
+            disabled={busy}
+            className="rounded-lg bg-forest px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? "Downloading & consolidating…" : "🧱 Build master dataset from these"}
+          </button>
+          <p className="mt-1 text-[10px] text-muted">
+            Downloads the direct-download sources and consolidates schema-compatible ones into one
+            table (kept honest — no fabricated joins).
+          </p>
+        </>
+      ) : (
+        <div className="space-y-1.5 text-xs">
+          <p className="font-semibold text-forest">
+            ✓ {master.name} — {master.n_rows} rows × {master.n_cols} cols
+          </p>
+          <p className="text-[11px] text-muted">{master.note}</p>
+          <details className="text-[11px]">
+            <summary className="cursor-pointer text-forest">
+              Sources ({master.tables.length})
+            </summary>
+            <ul className="mt-1 space-y-0.5">
+              {master.tables.map((t, i) => (
+                <li key={i} className="text-muted">
+                  {t.status === "ok" ? "✓" : "✗"} {t.name}
+                  {t.n_rows != null ? ` — ${t.n_rows}×${t.n_cols}` : ` (${t.status})`}
+                  {t.in_master ? " · in master" : ""}
+                </li>
+              ))}
+            </ul>
+          </details>
+          <AutoExperimentPanel
+            projectId={projectId}
+            datasetId={master.dataset_id}
+            columns={master.columns}
+            hypothesis={hypothesis}
+          />
+        </div>
+      )}
+      {error && <p className="mt-1 text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function AutoExperimentPanel({
+  projectId,
+  datasetId,
+  columns,
+  hypothesis,
+}: {
+  projectId: string;
+  datasetId: string;
+  columns: string[];
+  hypothesis: string;
+}) {
+  const [target, setTarget] = useState(columns[columns.length - 1] ?? "");
+  const [res, setRes] = useState<AutoExperimentResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    try {
+      setRes(await Api.autoExperiment(projectId, datasetId, target, hypothesis));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "auto-experiment failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 border-t border-leaf/30 pt-2">
+      <div className="flex items-center gap-2">
+        <label className="text-[11px] text-muted">Target</label>
+        <select
+          className="rounded border border-line px-1.5 py-0.5 text-[11px]"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+        >
+          {columns.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={run}
+          disabled={busy || !target}
+          className="rounded-lg bg-leaf px-2.5 py-1 text-[11px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+        >
+          {busy ? "Running the pipeline…" : "🧪 Run auto-experiment"}
+        </button>
+      </div>
+      {error && <p className="mt-1 text-[11px] text-red-600">{error}</p>}
+      {res && <AutoExperimentResultView res={res} />}
+    </div>
+  );
+}
+
+function AutoExperimentResultView({ res }: { res: AutoExperimentResult }) {
+  const stepIcon: Record<string, string> = {
+    eda: "📊",
+    leakage: "🛡",
+    preprocess: "🧹",
+    model: "🤖",
+    red_team: "⚔",
+  };
+  return (
+    <div className="mt-2 space-y-2 rounded-lg bg-white p-2">
+      <p className="text-[11px] text-muted">
+        Task: <b className="text-forest">{res.task}</b> · pipeline ran{" "}
+        {res.pipeline.filter((s) => !s.error).length} Evidence-locked steps
+      </p>
+
+      {/* pipeline steps */}
+      <div className="flex flex-wrap gap-1">
+        {res.pipeline.map((s, i) => (
+          <span
+            key={i}
+            title={s.error ?? JSON.stringify(s.outputs ?? {})}
+            className={`rounded px-1.5 py-0.5 text-[10px] ${
+              s.error ? "bg-red-50 text-red-600" : "bg-bg text-forest"
+            }`}
+          >
+            {stepIcon[s.step] ?? "•"} {s.step}
+            {s.step === "model" ? ` (${s.component.split(".").pop()})` : ""}
+          </span>
+        ))}
+      </div>
+
+      {/* leaderboard */}
+      <table className="w-full text-[11px]">
+        <tbody>
+          {res.results
+            .filter((r) => r.metrics && Object.keys(r.metrics).length)
+            .map((r, i) => (
+              <tr key={i} className={i === 0 ? "font-semibold text-forest" : "text-ink"}>
+                <td className="py-0.5">
+                  {i === 0 ? "🏆 " : ""}
+                  {r.component.split(".").pop()}
+                </td>
+                <td className="py-0.5 text-right text-muted">
+                  {Object.entries(r.metrics)
+                    .slice(0, 3)
+                    .map(([k, v]) => `${k} ${typeof v === "number" ? v.toFixed(3) : v}`)
+                    .join(" · ")}
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+
+      {/* trust signals */}
+      <div className="flex flex-wrap gap-2 text-[10px]">
+        <span
+          className={`rounded-full px-1.5 py-0.5 ${
+            res.leakage.length ? "bg-amber-100 text-amber-800" : "bg-leaf/20 text-forest"
+          }`}
+        >
+          leakage: {res.leakage.length} findings
+        </span>
+        {res.redteam && (
+          <span
+            className={`rounded-full px-1.5 py-0.5 ${
+              res.redteam.verdict === "PASS" ? "bg-leaf/20 text-forest" : "bg-red-100 text-red-700"
+            }`}
+          >
+            red-team: {res.redteam.verdict} (Δrobust {res.redteam.robustness_drop})
+          </span>
+        )}
+      </div>
+
+      {/* verdict */}
+      {res.summary?.verdict && (
+        <div className="rounded-lg bg-leaf/10 p-2">
+          <p className="text-[11px] text-ink">{res.summary.verdict}</p>
+          {res.summary.insights?.length > 0 && (
+            <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[10px] text-muted">
+              {res.summary.insights.map((s, i) => (
+                <li key={i}>{s}</li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-1 text-[10px] italic text-muted">
+            Predictive fit is not causal proof — a well-fit model shows association, not causation.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

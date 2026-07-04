@@ -142,11 +142,16 @@ export type CardModel = {
   result?: string;
   math?: MathItem[];
 };
+/** One piece of paper text that supports a card claim — the receipt behind a ✓ badge. */
+export type GroundingRef = { ordinal: number; quote: string };
 export type EmpiricalCard = {
   paper_type: "empirical";
   problem_statement: ProblemStatement;
   detailed_summary?: string;
   best_model?: string;
+  // claim-key ("model:0", "results", "best_model", "variant:1", "data_sample") → supporting text.
+  // A missing key for a numeric claim means "could not verify in the paper".
+  grounding?: Record<string, GroundingRef[]>;
   models_used: CardModel[];
   data_sources: string[];
   preprocessing: string[];
@@ -326,7 +331,8 @@ export type ModelTrace = {
   table?: Record<string, number | string>[] | null;
   tree?: TreeNode | null;
   baseline?: number | null;
-  rounds?: { tree: TreeNode }[] | null; // boosting ensemble: one small tree per round
+  // boosting ensemble: one small tree per round + the table it receives (current pred, residual)
+  rounds?: { tree: TreeNode; table?: Record<string, number | string>[] }[] | null;
   scan?: SplitScan | null; // trees — animated "how a split is chosen" threshold scan
   intercept?: number | null;
   coef?: { feature: string; weight: number }[] | null;
@@ -496,6 +502,41 @@ export type DataHuntResult = {
   queries: string[];
   candidates: DatasetCandidate[];
 };
+export type MasterTable = {
+  url: string;
+  name: string;
+  status: string;
+  n_rows?: number;
+  n_cols?: number;
+  in_master?: boolean;
+};
+export type MasterDatasetResult = {
+  dataset_id: string;
+  name: string;
+  n_rows: number;
+  n_cols: number;
+  columns: string[];
+  tables: MasterTable[];
+  note: string;
+};
+export type PipelineStep = {
+  step: string;
+  component: string;
+  run_id?: string;
+  evidence_count?: number;
+  outputs?: Record<string, unknown>;
+  error?: string;
+};
+export type AutoExperimentResult = {
+  task: string;
+  profile: { n_rows: number; n_cols: number; target: string };
+  plan: { preprocessing: string; models: string[]; rationale: string };
+  pipeline: PipelineStep[];
+  results: { component: string; metrics: Record<string, number>; run_id?: string | null }[];
+  leakage: { check?: string; severity?: string; column?: string; detail?: string }[];
+  redteam: { verdict?: string; base_metric?: number; robustness_drop?: number } | null;
+  summary: { best_model: string; verdict: string; insights: string[] };
+};
 
 export type Trust = {
   score: number;
@@ -627,7 +668,7 @@ export const Api = {
     datasetId: string,
     target: string,
     family: string,
-    params?: Record<string, number | string>,
+    params?: Record<string, number | string | string[]>,
   ) =>
     apiPost<ModelTrace>(
       `/api/datasets/${datasetId}/model-trace?target=${encodeURIComponent(target)}&family=${family}`,
@@ -646,6 +687,9 @@ export const Api = {
     ),
   refetchData: (experimentId: string) =>
     apiPost<Experiment>(`/api/experiments/${experimentId}/fetch-data`),
+  buildMasterDataset: (experimentId: string) =>
+    apiPost<Experiment>(`/api/experiments/${experimentId}/master-dataset`),
+  sharePaper: (paperId: string) => apiPost<{ path: string }>(`/api/papers/${paperId}/share`),
   preprocessPreview: (datasetId: string, op: PreprocessOp, rows = 6) =>
     apiPost<PreprocessPreview>(
       `/api/datasets/${datasetId}/preprocess-preview?op=${op}&rows=${rows}`,
@@ -678,6 +722,17 @@ export const Api = {
       hypothesis,
       variables,
       max_candidates: maxCandidates,
+    }),
+  buildDataset: (projectId: string, candidates: DatasetCandidate[], name = "master (web)") =>
+    apiPost<MasterDatasetResult>(`/api/projects/${projectId}/ideation/build-dataset`, {
+      candidates,
+      name,
+    }),
+  autoExperiment: (projectId: string, datasetId: string, target: string, hypothesis = "") =>
+    apiPost<AutoExperimentResult>(`/api/projects/${projectId}/ideation/auto-experiment`, {
+      dataset_id: datasetId,
+      target,
+      hypothesis,
     }),
 
   generateReport: (projectId: string) =>
