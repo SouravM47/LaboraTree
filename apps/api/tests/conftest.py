@@ -2,9 +2,10 @@
 
 import os
 
-# Keep the suite offline + deterministic: never hit the live web-search providers, even though a
-# developer's .env may carry real Brave/SerpAPI keys. Must run before settings are first imported.
+# Keep the suite offline + deterministic: never hit the live web-search or scholarly providers, even
+# though a developer's .env may carry real keys. Must run before settings are first imported.
 os.environ.setdefault("WEB_SEARCH_PROVIDER", "none")
+os.environ.setdefault("OPENALEX_ENABLED", "false")
 
 import pytest  # noqa: E402
 

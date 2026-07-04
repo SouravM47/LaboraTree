@@ -128,6 +128,28 @@ def _fake_search(query: str, count: int):
     ]
 
 
+def test_openalex_abstract_reconstruction():
+    from laboratree.core.search import _openalex_abstract
+
+    inv = {"Female": [0], "literacy": [1], "raises": [2], "income": [3]}
+    assert _openalex_abstract(inv) == "Female literacy raises income"
+    assert _openalex_abstract(None) == ""
+
+
+def test_research_search_falls_back_to_web(monkeypatch):
+    from laboratree.core import search as S
+
+    monkeypatch.setattr(S, "openalex_search", lambda q, n: [
+        S.SearchHit(title="Paper", url="https://doi.org/x", description="abstract", source="openalex")
+    ])
+    monkeypatch.setattr(S, "web_search", lambda q, n=None: [
+        S.SearchHit(title="Web", url="https://example.org/w", description="", source="brave")
+    ])
+    hits = S.research_search("q", 5)
+    assert hits[0].source == "openalex"                     # papers first
+    assert any(h.source == "brave" for h in hits)            # web supplements
+
+
 def test_plan_queries_falls_back_without_llm_json():
     qs = plan_queries("some hypothesis", lambda s, p, **k: "not json")
     assert qs and all(isinstance(q, str) for q in qs)

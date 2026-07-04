@@ -126,6 +126,78 @@ def search_available() -> bool:
     return bool(settings.brave_search_api_key or settings.serpapi_key)
 
 
+# ---- scholarly search: real journals/studies from free academic databases (no API key) ----------
+
+
+def _openalex_abstract(inv: dict | None) -> str:
+    """OpenAlex ships abstracts as an inverted index {word: [positions]} (a copyright dodge) —
+    reconstruct the running text from it."""
+    if not inv:
+        return ""
+    positions: dict[int, str] = {}
+    for word, idxs in inv.items():
+        for i in idxs:
+            positions[i] = word
+    return " ".join(positions[i] for i in sorted(positions))[:600]
+
+
+def openalex_search(query: str, count: int) -> list[SearchHit]:
+    """Search OpenAlex (openalex.org) — a free, keyless scholarly graph spanning ALL disciplines
+    (incl. social science), with abstracts. The strongest evidence source for the deep agent."""
+    import httpx
+
+    try:
+        mailto = settings.openalex_mailto or "hello@laboratree.dev"  # OpenAlex "polite pool"
+        resp = httpx.get(
+            "https://api.openalex.org/works",
+            params={"search": query, "per_page": min(count, 25), "mailto": mailto},
+            headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            log.info("openalex HTTP %s for %r", resp.status_code, query)
+            return []
+        hits: list[SearchHit] = []
+        for r in (resp.json() or {}).get("results") or []:
+            title = r.get("title") or ""
+            url = r.get("doi") or r.get("id") or ""
+            if not (title and url):
+                continue
+            year = r.get("publication_year")
+            venue = ((r.get("primary_location") or {}).get("source") or {}).get("display_name") or ""
+            abstract = _openalex_abstract(r.get("abstract_inverted_index"))
+            meta = " · ".join(x for x in [str(year) if year else "", venue] if x)
+            hits.append(SearchHit(
+                title=title, url=url,
+                description=(f"{meta}. {abstract}" if meta else abstract) or venue,
+                source="openalex",
+            ))
+        return hits[:count]
+    except Exception as exc:
+        log.info("openalex failed for %r: %s", query, exc)
+        return []
+
+
+def research_search(query: str, count: int | None = None) -> list[SearchHit]:
+    """Evidence search for the Ideation deep agent: real papers first (OpenAlex — keyless), then the
+    open web (Brave→SerpAPI) to fill in. Works even with NO web key, since OpenAlex needs none."""
+    n = count or settings.web_search_max_results
+    hits = openalex_search(query, n)
+    seen = {h.url for h in hits}
+    if len(hits) < n:
+        for h in web_search(query, n):  # supplement with web results
+            if h.url and h.url not in seen:
+                hits.append(h)
+                seen.add(h.url)
+            if len(hits) >= n:
+                break
+    return hits[:n]
+
+
+def research_available() -> bool:
+    """Scholarly evidence is available whenever OpenAlex is enabled (keyless) or a web key exists."""
+    return settings.openalex_enabled or search_available()
+
+
 # Hosts that commonly serve a raw, directly-downloadable data file.
 _RAW_DATA_HOSTS = (
     "raw.githubusercontent.com", "zenodo.org", "figshare.com", "ndownloader.figshare.com",
@@ -145,4 +217,12 @@ def looks_like_data_url(url: str) -> bool:
     return any(h in host for h in _RAW_DATA_HOSTS)
 
 
-__all__ = ["SearchHit", "looks_like_data_url", "search_available", "web_search"]
+__all__ = [
+    "SearchHit",
+    "looks_like_data_url",
+    "openalex_search",
+    "research_available",
+    "research_search",
+    "search_available",
+    "web_search",
+]

@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     brave_search_api_key: str = ""
     serpapi_key: str = ""
     web_search_max_results: int = 8
+    # OpenAlex — free, keyless scholarly database for the evidence hunt (real journals/studies).
+    openalex_enabled: bool = True
+    openalex_mailto: str = ""                 # your email → OpenAlex "polite pool" (faster, optional)
 
     # --- LLM observability ---
     llm_tracing: bool = True

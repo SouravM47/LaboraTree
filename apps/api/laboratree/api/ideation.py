@@ -14,7 +14,7 @@ from ..agents.run_executor import RunFailed, execute_component
 from ..core.deps import PrincipalDep, SessionDep
 from ..core.llm.context import use_llm_context
 from ..core.registry import REGISTRY
-from ..core.search import search_available, web_search
+from ..core.search import research_available, research_search, search_available, web_search
 from ..core.storage import get_blob_store
 from ..labs.ideation import llm as ideation_llm
 from ..labs.ideation.auto_experiment import (
@@ -176,16 +176,16 @@ async def grounded_ideation(
     import asyncio
 
     await _require_project(session, principal, project_id)
-    if not search_available():
+    if not research_available():
         raise HTTPException(
             status_code=503,
-            detail="web search is not configured — set BRAVE_SEARCH_API_KEY or SERPAPI_KEY in .env",
+            detail="evidence search is disabled — enable OpenAlex or set a web-search key in .env",
         )
 
     def _run() -> tuple[dict[str, Any], dict[str, Any]]:
         with use_llm_context("ideation", "grounded", project_id=project_id, org_id=principal.org_id):
             ev = gather_evidence(
-                body.goal, search_fn=web_search, complete_fn=ideation_llm.default_complete,
+                body.goal, search_fn=research_search, complete_fn=ideation_llm.default_complete,
                 max_sources=8,
             )
             context = _evidence_context(ev["brief"])
@@ -241,23 +241,23 @@ async def get_session(
 async def evidence_hunt(
     project_id: uuid.UUID, body: EvidenceIn, principal: PrincipalDep, session: SessionDep
 ) -> dict[str, Any]:
-    """Evidence hunt: search the open web for papers/studies/articles bearing on a conceptual
-    hypothesis and return a cited, synthesized brief (summary, stance, findings, insights, the
-    variables to test next, and gaps). Runs off the main event loop since search + LLM are sync."""
+    """Evidence hunt: search real academic databases (OpenAlex — free journals/studies) plus the open
+    web for evidence bearing on a conceptual hypothesis, and return a cited, synthesized brief
+    (summary, stance, findings, insights, the variables to test next, gaps). Off the event loop."""
     import asyncio
 
     await _require_project(session, principal, project_id)
-    if not search_available():
+    if not research_available():
         raise HTTPException(
             status_code=503,
-            detail="web search is not configured — set BRAVE_SEARCH_API_KEY or SERPAPI_KEY in .env",
+            detail="evidence search is disabled — enable OpenAlex or set a web-search key in .env",
         )
 
     def _run() -> dict[str, Any]:
         with use_llm_context("ideation", "evidence", project_id=project_id, org_id=principal.org_id):
             return gather_evidence(
                 body.hypothesis,
-                search_fn=web_search,
+                search_fn=research_search,
                 complete_fn=ideation_llm.default_complete,
                 max_sources=body.max_sources,
             )
