@@ -444,6 +444,7 @@ export type IdeationSession = {
   meta_review: string;
   created_at: string;
 };
+export type GroundedIdeationResult = IdeationSession & { evidence: EvidenceResult };
 
 export type EvidenceSource = {
   title: string;
@@ -700,6 +701,8 @@ export const Api = {
 
   runIdeation: (projectId: string, body: { goal: string; n?: number; evolve_n?: number }) =>
     apiPost<IdeationSession>(`/api/projects/${projectId}/ideation`, body),
+  groundedIdeation: (projectId: string, body: { goal: string; n?: number; evolve_n?: number }) =>
+    apiPost<GroundedIdeationResult>(`/api/projects/${projectId}/ideation/grounded`, body),
   listIdeation: (projectId: string) =>
     apiGet<IdeationSession[]>(`/api/projects/${projectId}/ideation`),
   evidenceHunt: (projectId: string, hypothesis: string, maxSources = 12) =>

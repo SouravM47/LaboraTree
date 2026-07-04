@@ -14,7 +14,9 @@ import {
 export default function IdeationLab({ projectId }: { projectId: string }) {
   const [goal, setGoal] = useState("");
   const [n, setN] = useState(4);
+  const [grounded, setGrounded] = useState(true);
   const [session, setSession] = useState<IdeationSession | null>(null);
+  const [evidence, setEvidence] = useState<EvidenceResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,8 +25,15 @@ export default function IdeationLab({ projectId }: { projectId: string }) {
     if (goal.trim().length < 4) return;
     setBusy(true);
     setError(null);
+    setEvidence(null);
     try {
-      setSession(await Api.runIdeation(projectId, { goal: goal.trim(), n, evolve_n: 2 }));
+      if (grounded) {
+        const r = await Api.groundedIdeation(projectId, { goal: goal.trim(), n, evolve_n: 2 });
+        setSession(r);
+        setEvidence(r.evidence);
+      } else {
+        setSession(await Api.runIdeation(projectId, { goal: goal.trim(), n, evolve_n: 2 }));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");
     } finally {
@@ -65,11 +74,24 @@ export default function IdeationLab({ projectId }: { projectId: string }) {
                 ))}
               </select>
             </label>
+            <label className="flex items-center gap-1.5 text-muted" title="First hunt the evidence on the web, then generate hypotheses grounded in it">
+              <input
+                type="checkbox"
+                checked={grounded}
+                onChange={(e) => setGrounded(e.target.checked)}
+                className="accent-leaf"
+              />
+              Ground in evidence
+            </label>
             <button
               disabled={busy}
               className="rounded-lg bg-leaf px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
-              {busy ? "Running tournament…" : "Run Co-Scientist"}
+              {busy
+                ? grounded
+                  ? "Hunting evidence + tournament…"
+                  : "Running tournament…"
+                : "Run Co-Scientist"}
             </button>
           </div>
         </form>
@@ -78,6 +100,15 @@ export default function IdeationLab({ projectId }: { projectId: string }) {
 
       {session && (
         <>
+          {evidence && (
+            <div className="rounded-2xl border border-line bg-white p-5">
+              <h3 className="font-display text-lg text-forest">
+                Evidence the hypotheses were grounded in
+              </h3>
+              <EvidenceBriefView projectId={projectId} result={evidence} compact />
+            </div>
+          )}
+
           <div className="rounded-2xl border border-line bg-leaf/10 p-5">
             <h3 className="font-display text-lg text-forest">Research direction</h3>
             <p className="mt-2 text-sm text-ink">{session.meta_review}</p>
@@ -100,6 +131,11 @@ export default function IdeationLab({ projectId }: { projectId: string }) {
                     {h.origin === "evolved" && (
                       <span className="mt-1 inline-block rounded-full bg-sprout/40 px-2 py-0.5 text-forest">
                         evolved
+                      </span>
+                    )}
+                    {h.origin === "grounded" && (
+                      <span className="mt-1 inline-block rounded-full bg-leaf/20 px-2 py-0.5 text-forest">
+                        evidence-grounded
                       </span>
                     )}
                   </div>
