@@ -6,6 +6,7 @@ import os
 # though a developer's .env may carry real keys. Must run before settings are first imported.
 os.environ.setdefault("WEB_SEARCH_PROVIDER", "none")
 os.environ.setdefault("OPENALEX_ENABLED", "false")
+os.environ.setdefault("SEMANTIC_SCHOLAR_ENABLED", "false")
 
 import pytest  # noqa: E402
 

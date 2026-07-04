@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     # OpenAlex — free, keyless scholarly database for the evidence hunt (real journals/studies).
     openalex_enabled: bool = True
     openalex_mailto: str = ""                 # your email → OpenAlex "polite pool" (faster, optional)
+    # Semantic Scholar — free scholarly API (keyless works but is rate-limited; a key raises limits).
+    semantic_scholar_enabled: bool = True
+    semantic_scholar_api_key: str = ""
 
     # --- LLM observability ---
     llm_tracing: bool = True

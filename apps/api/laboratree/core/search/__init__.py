@@ -177,25 +177,81 @@ def openalex_search(query: str, count: int) -> list[SearchHit]:
         return []
 
 
+def semantic_scholar_search(query: str, count: int) -> list[SearchHit]:
+    """Search Semantic Scholar (200M+ papers) via its free REST API — includes TLDRs (one-line AI
+    summaries) that sharpen the evidence synthesis. Keyless works but is rate-limited (429s degrade
+    to []); an optional API key raises the limit. No MCP runtime needed."""
+    import httpx
+
+    if not settings.semantic_scholar_enabled:
+        return []
+    headers = {"User-Agent": _USER_AGENT}
+    if settings.semantic_scholar_api_key:
+        headers["x-api-key"] = settings.semantic_scholar_api_key
+    try:
+        resp = httpx.get(
+            "https://api.semanticscholar.org/graph/v1/paper/search",
+            params={"query": query, "limit": min(count, 20),
+                    "fields": "title,abstract,year,venue,externalIds,tldr,url"},
+            headers=headers, timeout=_TIMEOUT,
+        )
+        if resp.status_code != 200:  # 429 (rate limit) etc. — never fatal
+            log.info("semantic scholar HTTP %s for %r", resp.status_code, query)
+            return []
+        hits: list[SearchHit] = []
+        for r in (resp.json() or {}).get("data") or []:
+            title = r.get("title") or ""
+            doi = (r.get("externalIds") or {}).get("DOI")
+            url = f"https://doi.org/{doi}" if doi else (r.get("url") or "")
+            if not (title and url):
+                continue
+            tldr = (r.get("tldr") or {}).get("text") or ""
+            body = tldr or (r.get("abstract") or "")
+            meta = " · ".join(str(x) for x in [r.get("year"), r.get("venue")] if x)
+            hits.append(SearchHit(
+                title=title, url=url,
+                description=(f"{meta}. {body}" if meta else body)[:600] or (r.get("venue") or ""),
+                source="semantic_scholar",
+            ))
+        return hits[:count]
+    except Exception as exc:
+        log.info("semantic scholar failed for %r: %s", query, exc)
+        return []
+
+
+def _doi_key(url: str) -> str:
+    """Normalize a URL to a DOI (lowercased) when possible, so the same paper from OpenAlex and
+    Semantic Scholar dedupes to one source."""
+    low = (url or "").lower()
+    if "doi.org/" in low:
+        return low.split("doi.org/", 1)[1].strip("/")
+    return low
+
+
 def research_search(query: str, count: int | None = None) -> list[SearchHit]:
-    """Evidence search for the Ideation deep agent: real papers first (OpenAlex — keyless), then the
-    open web (Brave→SerpAPI) to fill in. Works even with NO web key, since OpenAlex needs none."""
+    """Evidence search for the Ideation deep agent: real papers first (OpenAlex + Semantic Scholar —
+    both keyless), then the open web (Brave→SerpAPI) to fill in. Deduped by DOI. Works even with NO
+    web key, since the scholarly sources need none."""
     n = count or settings.web_search_max_results
-    hits = openalex_search(query, n)
-    seen = {h.url for h in hits}
-    if len(hits) < n:
-        for h in web_search(query, n):  # supplement with web results
-            if h.url and h.url not in seen:
+    hits: list[SearchHit] = []
+    seen: set[str] = set()
+    # scholarly sources first (papers), then web to fill any gap
+    for provider in (openalex_search, semantic_scholar_search, lambda q, c: web_search(q, c)):
+        if len(hits) >= n:
+            break
+        for h in provider(query, n):
+            key = _doi_key(h.url)
+            if key and key not in seen:
                 hits.append(h)
-                seen.add(h.url)
+                seen.add(key)
             if len(hits) >= n:
                 break
     return hits[:n]
 
 
 def research_available() -> bool:
-    """Scholarly evidence is available whenever OpenAlex is enabled (keyless) or a web key exists."""
-    return settings.openalex_enabled or search_available()
+    """Scholarly evidence is available whenever a keyless academic source is on, or a web key exists."""
+    return settings.openalex_enabled or settings.semantic_scholar_enabled or search_available()
 
 
 # Hosts that commonly serve a raw, directly-downloadable data file.
@@ -224,5 +280,6 @@ __all__ = [
     "research_available",
     "research_search",
     "search_available",
+    "semantic_scholar_search",
     "web_search",
 ]
