@@ -128,6 +128,20 @@ def _fake_search(query: str, count: int):
     ]
 
 
+def test_open_access_pdf_ignores_non_scholarly_urls():
+    from laboratree.core.search import open_access_pdf
+
+    # a plain web page (no DOI / OpenAlex id) resolves to no OA PDF without any network call
+    assert open_access_pdf("https://example.com/blog/post") is None
+
+
+def test_safe_filename():
+    from laboratree.api.ideation import _safe_filename
+
+    assert _safe_filename("Women & Human Development: 2000!").endswith(".pdf")
+    assert "/" not in _safe_filename("a/b/c") and " " not in _safe_filename("a b c")
+
+
 def test_openalex_abstract_reconstruction():
     from laboratree.core.search import _openalex_abstract
 

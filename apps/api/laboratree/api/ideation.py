@@ -64,6 +64,18 @@ class BuildDatasetIn(BaseModel):
     name: str = "master (web)"
 
 
+class PushPapersIn(BaseModel):
+    sources: list[dict[str, Any]]             # [{title, url}] from an evidence brief
+    max_papers: int = Field(default=8, ge=1, le=15)
+
+
+def _safe_filename(title: str) -> str:
+    import re
+
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", (title or "paper")).strip("_")[:80]
+    return (slug or "paper") + ".pdf"
+
+
 class AutoExperimentIn(BaseModel):
     dataset_id: uuid.UUID
     target: str
@@ -309,6 +321,59 @@ async def data_hunt(
             )
 
     return await asyncio.to_thread(_run)
+
+
+@router.post("/projects/{project_id}/ideation/push-to-paper-lab", status_code=201)
+async def push_to_paper_lab(
+    project_id: uuid.UUID, body: PushPapersIn, principal: PrincipalDep, session: SessionDep
+) -> dict[str, Any]:
+    """Download the OPEN-ACCESS full text of the evidence sources and ingest them into the Paper Lab
+    (extract → chunk → embed) so each becomes a chattable Paper with its own Paper Card. Paywalled
+    sources are skipped honestly with a reason — we only pull genuinely free PDFs."""
+    import asyncio
+
+    from ..core.search import open_access_pdf
+    from ..labs.paper import llm as paper_llm
+    from ..labs.paper.ingest import ingest_paper
+    from ..papers.models import Paper, PaperStatus
+
+    await _require_project(session, principal, project_id)
+    imported: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    with use_llm_context("ideation", "import_papers", project_id=project_id, org_id=principal.org_id):
+        for src in body.sources[: body.max_papers]:
+            url = str(src.get("url") or "")
+            title = str(src.get("title") or url)[:200]
+            pdf_url = await asyncio.to_thread(open_access_pdf, url)
+            if not pdf_url:
+                skipped.append({"title": title, "reason": "no open-access PDF (paywalled)"})
+                continue
+            data = await asyncio.to_thread(_download_bytes, pdf_url)
+            if not data or not data[:5].startswith(b"%PDF"):
+                skipped.append({"title": title, "reason": "could not download a valid PDF"})
+                continue
+
+            filename = _safe_filename(title)
+            paper = Paper(org_id=principal.org_id, project_id=project_id, title=title,
+                          filename=filename, storage_key="", status=PaperStatus.UPLOADED)
+            session.add(paper)
+            await session.flush()
+            key = f"papers/{paper.id}/{filename}"
+            get_blob_store().put(key, data)
+            paper.storage_key = key
+            try:
+                await ingest_paper(session, paper, data, embed_fn=paper_llm.default_embed)
+            except Exception as exc:
+                paper.status = PaperStatus.FAILED
+                await session.commit()
+                skipped.append({"title": title, "reason": f"ingest failed: {exc}"})
+                continue
+            await session.commit()
+            await session.refresh(paper)
+            imported.append({"title": title, "paper_id": str(paper.id), "filename": filename})
+
+    return {"imported": imported, "skipped": skipped}
 
 
 @router.post("/projects/{project_id}/ideation/build-dataset", status_code=201)

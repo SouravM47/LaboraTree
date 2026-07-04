@@ -7,6 +7,7 @@ import {
   type ChatTurn,
   type DataHuntResult,
   type EvidenceResult,
+  type EvidenceSource,
   type IdeationSession,
   type MasterDatasetResult,
 } from "@/lib/api";
@@ -420,6 +421,8 @@ function EvidenceBriefView({
         </details>
       )}
 
+      {sources.length > 0 && <PushToPaperLab projectId={projectId} sources={sources} />}
+
       <DataHunt projectId={projectId} result={result} />
       <BrainstormChat projectId={projectId} result={result} />
     </div>
@@ -522,6 +525,81 @@ function DataHunt({ projectId, result }: { projectId: string; result: EvidenceRe
               hypothesis={result.hypothesis}
             />
           )}
+        </div>
+      )}
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+/* ---- push the open-access sources into the Paper Lab ---- */
+
+function PushToPaperLab({
+  projectId,
+  sources,
+}: {
+  projectId: string;
+  sources: EvidenceSource[];
+}) {
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<{
+    imported: { title: string; paper_id: string }[];
+    skipped: { title: string; reason: string }[];
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function push() {
+    setBusy(true);
+    setError(null);
+    try {
+      setRes(await Api.pushToPaperLab(projectId, sources));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "import failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-line pt-3">
+      {!res ? (
+        <button
+          onClick={push}
+          disabled={busy}
+          className="rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-forest hover:bg-bg disabled:opacity-50"
+        >
+          {busy ? "Downloading open-access papers…" : "📥 Push open-access papers to Paper Lab"}
+        </button>
+      ) : (
+        <div className="space-y-1 text-xs">
+          <p className="font-semibold text-forest">
+            ✓ Imported {res.imported.length} paper{res.imported.length === 1 ? "" : "s"} into the
+            Paper Lab
+          </p>
+          {res.imported.length > 0 && (
+            <ul className="space-y-0.5">
+              {res.imported.map((p) => (
+                <li key={p.paper_id} className="truncate text-ink" title={p.title}>
+                  • {p.title}
+                </li>
+              ))}
+            </ul>
+          )}
+          {res.skipped.length > 0 && (
+            <details className="text-[11px] text-muted">
+              <summary className="cursor-pointer">
+                {res.skipped.length} skipped (paywalled / no free PDF)
+              </summary>
+              <ul className="mt-1 space-y-0.5">
+                {res.skipped.map((s, i) => (
+                  <li key={i} className="truncate" title={`${s.title} — ${s.reason}`}>
+                    ✗ {s.title} — {s.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <p className="text-[10px] text-muted">Open the Paper tab to read, card, and chat with them.</p>
         </div>
       )}
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}

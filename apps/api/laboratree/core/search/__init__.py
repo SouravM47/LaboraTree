@@ -254,6 +254,36 @@ def research_available() -> bool:
     return settings.openalex_enabled or settings.semantic_scholar_enabled or search_available()
 
 
+def open_access_pdf(url: str) -> str | None:
+    """Given a paper URL/DOI, return a directly-downloadable OPEN-ACCESS PDF link (via OpenAlex's OA
+    locations) — or None if the paper is paywalled / has no free full text. Keyless."""
+    import httpx
+
+    low = (url or "").lower()
+    if "doi.org/" in low:
+        ident = "doi:" + url.split("doi.org/", 1)[1].strip("/")
+    elif "openalex.org/" in low:
+        ident = url.rstrip("/").split("/")[-1]          # a W-id
+    elif low.startswith("10."):
+        ident = "doi:" + url                            # bare DOI
+    else:
+        return None
+    try:
+        resp = httpx.get(
+            f"https://api.openalex.org/works/{ident}",
+            params={"mailto": settings.openalex_mailto or "hello@laboratree.dev"},
+            headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+        w = resp.json() or {}
+        loc = w.get("best_oa_location") or {}
+        return loc.get("pdf_url") or (w.get("open_access") or {}).get("oa_url")
+    except Exception as exc:
+        log.info("open_access_pdf failed for %r: %s", url, exc)
+        return None
+
+
 # Hosts that commonly serve a raw, directly-downloadable data file.
 _RAW_DATA_HOSTS = (
     "raw.githubusercontent.com", "zenodo.org", "figshare.com", "ndownloader.figshare.com",
@@ -276,6 +306,7 @@ def looks_like_data_url(url: str) -> bool:
 __all__ = [
     "SearchHit",
     "looks_like_data_url",
+    "open_access_pdf",
     "openalex_search",
     "research_available",
     "research_search",

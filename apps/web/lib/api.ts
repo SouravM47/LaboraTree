@@ -486,6 +486,10 @@ export type EvidenceResult = {
   brief: EvidenceBrief;
 };
 export type ChatTurn = { role: "user" | "assistant"; content: string };
+export type PushPapersResult = {
+  imported: { title: string; paper_id: string; filename: string }[];
+  skipped: { title: string; reason: string }[];
+};
 export type DatasetCandidate = {
   title: string;
   url: string;
@@ -691,6 +695,11 @@ export const Api = {
   buildMasterDataset: (experimentId: string) =>
     apiPost<Experiment>(`/api/experiments/${experimentId}/master-dataset`),
   sharePaper: (paperId: string) => apiPost<{ path: string }>(`/api/papers/${paperId}/share`),
+  downloadEvidenceBundle: (experimentId: string) =>
+    downloadBlob(
+      `/api/experiments/${experimentId}/evidence-bundle`,
+      `evidence-bundle-${experimentId.slice(0, 8)}.json`,
+    ),
   preprocessPreview: (datasetId: string, op: PreprocessOp, rows = 6) =>
     apiPost<PreprocessPreview>(
       `/api/datasets/${datasetId}/preprocess-preview?op=${op}&rows=${rows}`,
@@ -709,6 +718,11 @@ export const Api = {
     apiPost<EvidenceResult>(`/api/projects/${projectId}/ideation/evidence`, {
       hypothesis,
       max_sources: maxSources,
+    }),
+  pushToPaperLab: (projectId: string, sources: EvidenceSource[], maxPapers = 8) =>
+    apiPost<PushPapersResult>(`/api/projects/${projectId}/ideation/push-to-paper-lab`, {
+      sources,
+      max_papers: maxPapers,
     }),
   brainstorm: (
     projectId: string,
