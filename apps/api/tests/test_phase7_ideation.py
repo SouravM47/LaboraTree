@@ -6,8 +6,9 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from laboratree.core.search import SearchHit
+from laboratree.core.search import SearchHit, looks_like_data_url
 from laboratree.labs.ideation.coscientist import run_ideation, tournament
+from laboratree.labs.ideation.data_hunt import hunt_datasets
 from laboratree.labs.ideation.evidence import brainstorm, gather_evidence, plan_queries
 from laboratree.main import app
 
@@ -155,3 +156,47 @@ def test_brainstorm_degrades_on_llm_error():
 
     out = brainstorm("h", {}, [], "q?", [], _boom)
     assert out["answer"]  # non-empty fallback, never raises
+
+
+# ---------------- data hunt ----------------
+
+def test_looks_like_data_url():
+    assert looks_like_data_url("https://example.org/data/file.csv")
+    assert looks_like_data_url("https://raw.githubusercontent.com/x/y/main/anything")
+    assert not looks_like_data_url("https://example.org/blog/article")
+
+
+def _fake_data_complete(system: str, prompt: str, **kw) -> str:
+    if "FIND DOWNLOADABLE DATASETS" in system:
+        return '["female literacy rate India district dataset", "rural development index India data"]'
+    if "data-sourcing expert" in system:
+        # [1] is a real dataset, [2] is an article to be filtered out
+        return (
+            '[{"index": 1, "is_dataset": true, "relevance": 0.9, "why": "district literacy panel",'
+            ' "variables_covered": ["female_literacy_rate"], "access": "direct_download"},'
+            ' {"index": 2, "is_dataset": false, "relevance": 0.1, "why": "news article",'
+            ' "variables_covered": [], "access": "unknown"}]'
+        )
+    return "[]"
+
+
+def _fake_data_search(query: str, count: int):
+    return [
+        SearchHit(title="India literacy data.csv", url="https://data.gov/india_literacy.csv",
+                  description="District-level literacy.", source="brave"),
+        SearchHit(title="Opinion: literacy matters", url="https://news.example.com/op-ed",
+                  description="An article.", source="brave"),
+    ]
+
+
+def test_hunt_datasets_ranks_real_datasets_and_filters_articles():
+    out = hunt_datasets(
+        "female literacy -> rural development",
+        ["female_literacy_rate", "rural_development_index"],
+        search_fn=_fake_data_search, complete_fn=_fake_data_complete, max_candidates=10,
+    )
+    urls = [c["url"] for c in out["candidates"]]
+    assert "https://data.gov/india_literacy.csv" in urls          # dataset kept
+    assert "https://news.example.com/op-ed" not in urls           # article filtered
+    top = out["candidates"][0]
+    assert top["direct_download"] is True and top["relevance"] >= 0.5

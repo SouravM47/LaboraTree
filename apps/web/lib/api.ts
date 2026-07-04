@@ -456,6 +456,23 @@ export type EvidenceResult = {
   brief: EvidenceBrief;
 };
 export type ChatTurn = { role: "user" | "assistant"; content: string };
+export type DatasetCandidate = {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  relevance: number;
+  why_relevant: string;
+  variables_covered: string[];
+  access: "direct_download" | "portal" | "unknown" | string;
+  direct_download: boolean;
+};
+export type DataHuntResult = {
+  hypothesis: string;
+  variables: string[];
+  queries: string[];
+  candidates: DatasetCandidate[];
+};
 
 export type Trust = {
   score: number;
@@ -626,6 +643,12 @@ export const Api = {
       history: ChatTurn[];
     },
   ) => apiPost<{ answer: string }>(`/api/projects/${projectId}/ideation/brainstorm`, payload),
+  dataHunt: (projectId: string, hypothesis: string, variables: string[], maxCandidates = 10) =>
+    apiPost<DataHuntResult>(`/api/projects/${projectId}/ideation/data-hunt`, {
+      hypothesis,
+      variables,
+      max_candidates: maxCandidates,
+    }),
 
   generateReport: (projectId: string) =>
     apiPost<ReportResult>(`/api/projects/${projectId}/report`),

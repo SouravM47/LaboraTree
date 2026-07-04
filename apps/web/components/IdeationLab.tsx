@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Api, type ChatTurn, type EvidenceResult, type IdeationSession } from "@/lib/api";
+import {
+  Api,
+  type ChatTurn,
+  type DataHuntResult,
+  type EvidenceResult,
+  type IdeationSession,
+} from "@/lib/api";
 
 export default function IdeationLab({ projectId }: { projectId: string }) {
   const [goal, setGoal] = useState("");
@@ -337,7 +343,101 @@ function EvidenceBriefView({
         </details>
       )}
 
+      <DataHunt projectId={projectId} result={result} />
       <BrainstormChat projectId={projectId} result={result} />
+    </div>
+  );
+}
+
+function DataHunt({ projectId, result }: { projectId: string; result: EvidenceResult }) {
+  const [data, setData] = useState<DataHuntResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const variables = result.brief.variables_to_test?.map((v) => v.name) ?? [];
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    try {
+      setData(await Api.dataHunt(projectId, result.hypothesis, variables));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "data hunt failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-line pt-3">
+      {!data ? (
+        <button
+          onClick={run}
+          disabled={busy}
+          className="rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-forest hover:bg-bg disabled:opacity-50"
+        >
+          {busy ? "Searching for datasets…" : "🔎 Find data to test this"}
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-forest">
+            Candidate datasets ({data.candidates.length})
+          </p>
+          {data.candidates.length === 0 ? (
+            <p className="text-xs text-muted">
+              No clear downloadable datasets surfaced. Try refining the variables, or search a
+              statistics portal (World Bank, data.gov) directly.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {data.candidates.map((c) => (
+                <li key={c.url} className="rounded-lg border border-line bg-white p-2 text-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <a
+                      href={c.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-forest hover:underline"
+                    >
+                      {c.title}
+                    </a>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {c.direct_download && (
+                        <span className="rounded-full bg-leaf/20 px-1.5 text-[10px] text-forest">
+                          direct download
+                        </span>
+                      )}
+                      <span className="rounded-full bg-bg px-1.5 text-[10px] text-muted">
+                        {Math.round(c.relevance * 100)}% match
+                      </span>
+                    </div>
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted">{c.source}</p>
+                  {c.why_relevant && <p className="mt-1 text-xs text-ink">{c.why_relevant}</p>}
+                  {c.variables_covered.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {c.variables_covered.map((v, i) => (
+                        <span
+                          key={i}
+                          className="rounded bg-sprout/30 px-1.5 py-0.5 text-[10px] text-forest"
+                        >
+                          {v}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            onClick={() => setData(null)}
+            className="text-xs text-muted hover:text-forest"
+          >
+            ↺ search again
+          </button>
+        </div>
+      )}
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
     </div>
   );
 }

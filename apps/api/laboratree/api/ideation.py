@@ -15,6 +15,7 @@ from ..core.llm.context import use_llm_context
 from ..core.search import search_available, web_search
 from ..labs.ideation import llm as ideation_llm
 from ..labs.ideation.coscientist import run_ideation
+from ..labs.ideation.data_hunt import hunt_datasets
 from ..labs.ideation.evidence import brainstorm, gather_evidence
 from ..projects.models import IdeationSession, IdeationStatus, Project
 
@@ -38,6 +39,12 @@ class BrainstormIn(BaseModel):
     sources: list[dict[str, Any]] = []
     question: str = Field(min_length=1)
     history: list[dict[str, str]] = []
+
+
+class DataHuntIn(BaseModel):
+    hypothesis: str = Field(min_length=8)
+    variables: list[str] = []
+    max_candidates: int = Field(default=10, ge=4, le=20)
 
 
 class SessionOut(BaseModel):
@@ -150,6 +157,32 @@ async def brainstorm_chat(
             return brainstorm(
                 body.hypothesis, body.brief, body.sources, body.question, body.history,
                 ideation_llm.default_complete,
+            )
+
+    return await asyncio.to_thread(_run)
+
+
+@router.post("/projects/{project_id}/ideation/data-hunt", status_code=201)
+async def data_hunt(
+    project_id: uuid.UUID, body: DataHuntIn, principal: PrincipalDep, session: SessionDep
+) -> dict[str, Any]:
+    """Find candidate datasets on the open web to test a hypothesis — ranked, annotated with why each
+    is relevant and whether it's directly downloadable."""
+    import asyncio
+
+    await _require_project(session, principal, project_id)
+    if not search_available():
+        raise HTTPException(
+            status_code=503,
+            detail="web search is not configured — set BRAVE_SEARCH_API_KEY or SERPAPI_KEY in .env",
+        )
+
+    def _run() -> dict[str, Any]:
+        with use_llm_context("ideation", "data_hunt", project_id=project_id, org_id=principal.org_id):
+            return hunt_datasets(
+                body.hypothesis, body.variables,
+                search_fn=web_search, complete_fn=ideation_llm.default_complete,
+                max_candidates=body.max_candidates,
             )
 
     return await asyncio.to_thread(_run)
