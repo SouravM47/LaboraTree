@@ -8,7 +8,6 @@ The agent first classifies the paper as **empirical** (data/models/experiments) 
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
@@ -18,22 +17,12 @@ MAX_CHARS = 26000
 
 
 def _parse_json(raw: str) -> dict:
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.split("```", 2)[1]
-        if text.lstrip().lower().startswith("json"):
-            text = text.lstrip()[4:]
-    try:
-        data = json.loads(text)
-        return data if isinstance(data, dict) else {"raw": raw}
-    except json.JSONDecodeError:
-        s, e = text.find("{"), text.rfind("}")
-        if 0 <= s < e:
-            try:
-                return json.loads(text[s : e + 1])
-            except json.JSONDecodeError:
-                pass
-        return {"raw": raw, "parse_error": True}
+    # Robust to prose, code fences, AND truncated output (a big empirical card can exceed the token
+    # budget and get cut off mid-object — the lenient parser closes the open brackets so it survives).
+    from ....core.jsonparse import loads_lenient
+
+    data = loads_lenient(raw)
+    return data if isinstance(data, dict) else {"raw": raw, "parse_error": True}
 
 
 # ---------------- classification ----------------
@@ -72,7 +61,13 @@ _EMPIRICAL_INSTRUCTION = (
     "jargon; spell out any acronym in plain words.\n"
     "- detailed_summary: a thorough but plain-English summary of the WHOLE study — what problem, what "
     "data, what they did, and what they found — 4-8 simple sentences anyone can follow.\n"
-    "- models_used: array of {name, summary, universal, use_case, example, result, math} where:\n"
+    "- models_used: array of {name, summary, universal, use_case, example, result, math, "
+    "features_used} where:\n"
+    "    * features_used = array of the EXACT attribute abbreviations this model/variant trains on, "
+    "when the paper limits it to a subset (e.g. the 13 BBO-selected attributes for 'XGBoost with "
+    "BBO': ['al','pcc','ba','bu','sod','pot','hemo','pcv','wc','htn','dm','appet','ane']); empty "
+    "array when it uses all features. If a model appears twice (all features vs selected subset), "
+    "emit TWO entries with their own features_used.\n"
     "    * summary = what THIS paper does with the model (1-2 sentences),\n"
     "    * universal = a model-agnostic plain explanation of what this kind of model is and how it "
     "works in general (2-3 sentences, no reference to this paper),\n"
@@ -140,10 +135,11 @@ def _model(m: Any) -> dict:
             "example": str(m.get("example", "")),
             "result": str(m.get("result", "")),
             "math": [_math(x) for x in (m.get("math") or [])],
+            "features_used": [str(f) for f in (m.get("features_used") or []) if str(f).strip()],
         }
     return {
         "name": str(m), "summary": "", "universal": "", "use_case": "",
-        "example": "", "result": "", "math": [],
+        "example": "", "result": "", "math": [], "features_used": [],
     }
 
 
