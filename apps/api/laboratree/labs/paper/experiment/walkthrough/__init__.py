@@ -19,10 +19,17 @@ MODEL_MAP: list[tuple[str, str]] = [
     ("logistic", "model.ml.logistic_regression"),
     ("probit", "model.econometrics.probit"),
     ("logit", "model.ml.logistic_regression"),
+    ("sarima", "model.timeseries.sarima"),
     ("arima", "model.econometrics.arima"),
-    ("sarima", "model.econometrics.arima"),
-    ("xgboost", "model.ml.gradient_boosting"),
-    ("xgb", "model.ml.gradient_boosting"),
+    ("holt", "model.timeseries.ets"),
+    ("exponential smoothing", "model.timeseries.ets"),
+    ("adaboost", "model.ml.adaboost"),
+    ("ada boost", "model.ml.adaboost"),
+    ("extra trees", "model.ml.extra_trees"),
+    ("extremely randomized", "model.ml.extra_trees"),
+    ("bagging", "model.ml.bagging"),
+    ("xgboost", "model.ml.xgboost"),
+    ("xgb", "model.ml.xgboost"),
     ("lightgbm", "model.ml.gradient_boosting"),
     ("catboost", "model.ml.gradient_boosting"),
     ("gradient boost", "model.ml.gradient_boosting"),
@@ -42,6 +49,9 @@ MODEL_MAP: list[tuple[str, str]] = [
     ("svc", "model.ml.svm"),
     ("naive bayes", "model.ml.naive_bayes"),
     ("naïve bayes", "model.ml.naive_bayes"),
+    ("transformer", "model.dl.transformer"),
+    ("attention", "model.dl.transformer"),
+    ("bert", "model.dl.transformer"),
     ("bidirectional lstm", "model.dl.rnn"),
     ("bi-lstm", "model.dl.rnn"),
     ("bilstm", "model.dl.rnn"),
@@ -56,6 +66,9 @@ MODEL_MAP: list[tuple[str, str]] = [
     ("perceptron", "model.ml.mlp"),
     ("mlp", "model.ml.mlp"),
     ("deep learning", "model.ml.mlp"),
+    ("hierarchical", "model.clustering.hierarchical"),
+    ("agglomerative", "model.clustering.hierarchical"),
+    ("spectral", "model.clustering.spectral"),
     ("k-means", "model.clustering.kmeans"),
     ("kmeans", "model.clustering.kmeans"),
     ("dbscan", "model.clustering.dbscan"),
@@ -69,6 +82,11 @@ MODEL_MAP: list[tuple[str, str]] = [
     ("outlier", "model.anomaly.isolation_forest"),
     ("poisson", "model.econometrics.poisson"),
     ("ols", "model.econometrics.ols"),
+    ("elastic net", "model.ml.elastic_net"),
+    ("elasticnet", "model.ml.elastic_net"),
+    ("ridge", "model.ml.ridge"),
+    ("lasso", "model.ml.lasso"),
+    ("gaussian process", "model.ml.gaussian_process"),
     ("linear", "model.ml.linear_regression"),
     ("regression", "model.ml.linear_regression"),
 ]
@@ -86,8 +104,8 @@ MODEL_PARAMS: dict[str, dict[str, Any]] = {
     "recurrent": {"cell": "rnn"},
 }
 
-# Truly unavailable architectures (transformers etc.) — the closest honest stand-in is the MLP.
-_NEURAL_HINTS = ("transformer", "autoencoder", "bert", "attention")
+# Truly unavailable architectures — the closest honest stand-in is the MLP.
+_NEURAL_HINTS = ("autoencoder", "gan", "diffusion")
 
 
 def standin_for(model_name: str) -> str:
@@ -120,6 +138,22 @@ def _node(i: int, kind: str, title: str, detail: str = "", **extra: Any) -> dict
     return {"id": f"n{i}", "kind": kind, "title": title, "detail": detail, "source": "paper", **extra}
 
 
+# Generic, model-agnostic preprocessing that is handled as a tweakable choice rather than a funnel
+# node (train/test split is kept — it's a distinct, always-shown pipeline step).
+_GENERIC_PP = (
+    "missing", "impute", "fill na", "fillna", "drop na", "dropna", "standardi", "normali", "rescal",
+    "scal", "min-max", "minmax", "z-score", "z score", "one-hot", "one hot", "onehot", "dummy",
+    "encode", "encoding", "label encod",
+)
+
+
+def _is_generic_preprocess(pp: str) -> bool:
+    low = str(pp).lower()
+    if "split" in low:                       # train/test split is a real, distinct funnel step
+        return False
+    return any(g in low for g in _GENERIC_PP)
+
+
 def default_walkthrough(card: dict[str, Any]) -> list[dict[str, Any]]:
     """Deterministic pipeline derived straight from the Paper Card (no LLM)."""
     steps: list[dict[str, Any]] = []
@@ -129,7 +163,12 @@ def default_walkthrough(card: dict[str, Any]) -> list[dict[str, Any]]:
     steps.append(_node(i, "data", "Load data", ", ".join(sources) or "dataset(s) from the paper"))
     i += 1
 
+    # Only PAPER-SPECIFIC preprocessing becomes a funnel node. Generic steps (impute missing values,
+    # standardize/normalize/scale, encode) are offered as model-level choices (hyperparameter tweaks),
+    # not forced nodes — so the funnel shows what's distinctive about THIS paper's pipeline.
     for pp in card.get("preprocessing") or []:
+        if _is_generic_preprocess(pp):
+            continue
         steps.append(_node(i, "preprocess", pp))
         i += 1
 
@@ -144,6 +183,12 @@ def default_walkthrough(card: dict[str, Any]) -> list[dict[str, Any]]:
         detail = model.get("summary", "") if isinstance(model, dict) else "Fit and evaluate"
         match = _model_component(mname)
         cid, extra = match if match else (None, {})
+        # the paper's selected feature subset for this variant (e.g. the 13 BBO-picked attributes)
+        subset = model.get("features_used") if isinstance(model, dict) else None
+        if subset:
+            extra = extra | {"features": [str(f) for f in subset]}
+            detail = (detail + f" Uses only the {len(subset)} selected features: "
+                      + ", ".join(str(f) for f in subset) + ".").strip()
         steps.append(_node(i, "model", mname, detail or "Fit and evaluate",
                            component_id=cid,
                            available=cid is not None,
@@ -176,6 +221,30 @@ def _normalize_pipeline(steps: list[dict[str, Any]], card: dict[str, Any]) -> li
                     f"Explore the {len(ivs)} features vs the target '{target}' before modeling.",
                 ),
             )
+
+    # Collapse to exactly ONE result node and ONE inference node — every 'result' node renders the
+    # same paper-vs-ours comparison, so multiples are just noise. Keep the first of each; the single
+    # result node carries the paper's reported results, the inference node the authors' conclusion.
+    collapsed: list[dict[str, Any]] = []
+    seen_result = seen_inference = False
+    for s in steps:
+        if s.get("kind") == "preprocess" and _is_generic_preprocess(s.get("title", "")):
+            continue                          # generic prep is a model choice, not a funnel node
+        if s.get("kind") == "result":
+            if seen_result:
+                continue
+            seen_result = True
+            if not s.get("detail"):
+                s["detail"] = str(card.get("results") or "")
+        elif s.get("kind") == "inference":
+            if seen_inference:
+                continue
+            seen_inference = True
+            if not s.get("detail"):
+                s["detail"] = str(card.get("inference") or "")
+        collapsed.append(s)
+    steps = collapsed
+
     for i, s in enumerate(steps):
         s["id"] = f"n{i}"
     return steps
