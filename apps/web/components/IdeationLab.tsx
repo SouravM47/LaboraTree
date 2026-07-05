@@ -10,6 +10,7 @@ import {
   type EvidenceSource,
   type IdeationSession,
   type MasterDatasetResult,
+  type OaSource,
 } from "@/lib/api";
 
 export default function IdeationLab({ projectId }: { projectId: string }) {
@@ -541,65 +542,105 @@ function PushToPaperLab({
   projectId: string;
   sources: EvidenceSource[];
 }) {
+  const [oa, setOa] = useState<OaSource[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const [res, setRes] = useState<{
-    imported: { title: string; paper_id: string }[];
-    skipped: { title: string; reason: string }[];
-  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // per-paper import state: url → "importing" | "done" | error string
+  const [imp, setImp] = useState<Record<string, string>>({});
 
-  async function push() {
+  async function findDownloadable() {
     setBusy(true);
     setError(null);
     try {
-      setRes(await Api.pushToPaperLab(projectId, sources));
+      const r = await Api.resolveOa(projectId, sources);
+      setOa(r.sources);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "import failed");
+      setError(err instanceof Error ? err.message : "lookup failed");
     } finally {
       setBusy(false);
     }
   }
 
+  async function sendOne(s: OaSource) {
+    setImp((m) => ({ ...m, [s.url]: "importing" }));
+    try {
+      const r = await Api.pushToPaperLab(projectId, [{ title: s.title, url: s.url }]);
+      setImp((m) => ({
+        ...m,
+        [s.url]: r.imported.length ? "done" : r.skipped[0]?.reason || "failed",
+      }));
+    } catch (err) {
+      setImp((m) => ({ ...m, [s.url]: err instanceof Error ? err.message : "failed" }));
+    }
+  }
+
+  const downloadable = oa?.filter((s) => s.pdf_url) ?? [];
+
   return (
     <div className="border-t border-line pt-3">
-      {!res ? (
+      {!oa ? (
         <button
-          onClick={push}
+          onClick={findDownloadable}
           disabled={busy}
           className="rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-forest hover:bg-bg disabled:opacity-50"
         >
-          {busy ? "Downloading open-access papers…" : "📥 Push open-access papers to Paper Lab"}
+          {busy ? "Checking which papers are free…" : "📄 Find downloadable papers"}
         </button>
       ) : (
-        <div className="space-y-1 text-xs">
+        <div className="space-y-1.5 text-xs">
           <p className="font-semibold text-forest">
-            ✓ Imported {res.imported.length} paper{res.imported.length === 1 ? "" : "s"} into the
-            Paper Lab
+            {downloadable.length} of {oa.length} sources have a free full-text PDF — you choose what to do
+            with each:
           </p>
-          {res.imported.length > 0 && (
-            <ul className="space-y-0.5">
-              {res.imported.map((p) => (
-                <li key={p.paper_id} className="truncate text-ink" title={p.title}>
-                  • {p.title}
+          <ul className="space-y-1">
+            {oa.map((s) => {
+              const st = imp[s.url];
+              return (
+                <li key={s.url} className="rounded-lg border border-line bg-white p-2">
+                  <p className="truncate font-medium text-forest" title={s.title}>
+                    {s.title}
+                  </p>
+                  {s.pdf_url ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <a
+                        href={s.pdf_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded border border-line px-2 py-0.5 text-forest hover:bg-bg"
+                      >
+                        ⬇ Download PDF
+                      </a>
+                      {st === "done" ? (
+                        <span className="text-green-700">✓ in Paper Lab</span>
+                      ) : (
+                        <button
+                          onClick={() => sendOne(s)}
+                          disabled={st === "importing"}
+                          className="rounded bg-forest px-2 py-0.5 font-medium text-white hover:opacity-90 disabled:opacity-50"
+                        >
+                          {st === "importing" ? "Sending…" : "→ Send to Paper Lab"}
+                        </button>
+                      )}
+                      {st && st !== "done" && st !== "importing" && (
+                        <span className="text-red-600">{st}</span>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-0.5 text-muted">
+                      No free PDF (paywalled) —{" "}
+                      <a href={s.url} target="_blank" rel="noreferrer" className="text-leaf hover:underline">
+                        open the page ↗
+                      </a>
+                    </p>
+                  )}
                 </li>
-              ))}
-            </ul>
-          )}
-          {res.skipped.length > 0 && (
-            <details className="text-[11px] text-muted">
-              <summary className="cursor-pointer">
-                {res.skipped.length} skipped (paywalled / no free PDF)
-              </summary>
-              <ul className="mt-1 space-y-0.5">
-                {res.skipped.map((s, i) => (
-                  <li key={i} className="truncate" title={`${s.title} — ${s.reason}`}>
-                    ✗ {s.title} — {s.reason}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-          <p className="text-[10px] text-muted">Open the Paper tab to read, card, and chat with them.</p>
+              );
+            })}
+          </ul>
+          <p className="text-[10px] text-muted">
+            Downloads open in a new tab. Sending imports the paper so you can card + chat with it in the
+            Paper tab.
+          </p>
         </div>
       )}
       {error && <p className="mt-1 text-xs text-red-600">{error}</p>}

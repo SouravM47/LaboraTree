@@ -514,6 +514,7 @@ export type PushPapersResult = {
   imported: { title: string; paper_id: string; filename: string }[];
   skipped: { title: string; reason: string }[];
 };
+export type OaSource = { title: string; url: string; pdf_url: string | null };
 export type DatasetCandidate = {
   title: string;
   url: string;
@@ -746,7 +747,12 @@ export const Api = {
       hypothesis,
       max_sources: maxSources,
     }),
-  pushToPaperLab: (projectId: string, sources: EvidenceSource[], maxPapers = 8) =>
+  resolveOa: (projectId: string, sources: EvidenceSource[], maxPapers = 12) =>
+    apiPost<{ sources: OaSource[] }>(`/api/projects/${projectId}/ideation/resolve-oa`, {
+      sources,
+      max_papers: maxPapers,
+    }),
+  pushToPaperLab: (projectId: string, sources: { title: string; url: string }[], maxPapers = 8) =>
     apiPost<PushPapersResult>(`/api/projects/${projectId}/ideation/push-to-paper-lab`, {
       sources,
       max_papers: maxPapers,

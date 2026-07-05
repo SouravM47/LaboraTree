@@ -326,6 +326,34 @@ async def data_hunt(
     return await cached_json(key, settings.ideation_cache_ttl_s, lambda: asyncio.to_thread(_run))
 
 
+@router.post("/projects/{project_id}/ideation/resolve-oa",
+             dependencies=[rate_limited("resolve_oa", limit=15)])
+async def resolve_oa(
+    project_id: uuid.UUID, body: PushPapersIn, principal: PrincipalDep, session: SessionDep
+) -> dict[str, Any]:
+    """For each evidence source, resolve a directly-downloadable OPEN-ACCESS PDF (or null if
+    paywalled) — so the UI can let the user DECIDE per paper: download it, or send it to the Paper
+    Lab. No side effects; nothing is imported here."""
+    import asyncio
+
+    from ..core.search import open_access_pdf
+
+    await _require_project(session, principal, project_id)
+
+    def _run() -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for src in body.sources[: body.max_papers]:
+            url = str(src.get("url") or "")
+            out.append({
+                "title": str(src.get("title") or url)[:200],
+                "url": url,
+                "pdf_url": (open_access_pdf(url) if url else None),
+            })
+        return out
+
+    return {"sources": await asyncio.to_thread(_run)}
+
+
 @router.post("/projects/{project_id}/ideation/push-to-paper-lab", status_code=201,
              dependencies=[rate_limited("import_papers", limit=8)])
 async def push_to_paper_lab(
