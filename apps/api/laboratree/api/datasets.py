@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from ..core.deps import PrincipalDep, SessionDep
 from ..core.storage import get_blob_store
+from ..labs.modeling.explain import explainer_for
 from ..labs.modeling.viz import (
     FeatureSelectionTrace,
     ModelTrace,
@@ -96,6 +97,14 @@ async def preview_dataset(
 # The per-family trace logic is a pluggable package: laboratree/labs/modeling/viz (one module per
 # family, auto-discovered). These endpoints are thin async wrappers that stream the dataset bytes
 # into that registry off the event loop.
+
+
+@router.get("/models/{family}/explainer")
+async def model_explainer(family: str, principal: PrincipalDep) -> dict[str, Any]:
+    """Beginner 'learn this model from zero' content for a model family — intuition, how it works,
+    every formula with its symbols explained and a worked example, a demo table, and references.
+    Static (no dataset needed); the frontend pairs it with the staged animation."""
+    return explainer_for(family)
 
 
 class TraceParamsIn(BaseModel):
@@ -231,9 +240,29 @@ class PreprocessPreview(BaseModel):
     changed: list[list[str]]  # per-row: which columns changed
     stats: dict[str, dict]  # per numeric column: mean/median/std/min/max (for formulas + fill values)
     summary: str
+    removed: list[bool] | None = None  # row ops: which sampled rows get dropped (red vs green)
+    n_removed_total: int | None = None  # row ops: how many rows the op removes across the dataset
+    n_total: int | None = None
 
 
-_PREPROC_OPS = ("impute_mean", "impute_median", "standardize", "minmax")
+_PREPROC_OPS = (
+    "impute_mean", "impute_median", "standardize", "minmax",
+    "drop_missing_rows", "filter_rows", "encode",
+)
+
+_CMP = {
+    "lt": lambda s, v: s < v, "le": lambda s, v: s <= v,
+    "gt": lambda s, v: s > v, "ge": lambda s, v: s >= v,
+    "eq": lambda s, v: s == v, "ne": lambda s, v: s != v,
+}
+_CMP_WORD = {"lt": "<", "le": "≤", "gt": ">", "ge": "≥", "eq": "=", "ne": "≠"}
+
+
+def _mixed_sample(full, removed_mask, n):
+    """Up to n rows mixing removed (red) and kept (green) so the animation shows both fates."""
+    removed_rows = full[removed_mask].head(max(2, n // 2))
+    kept_rows = full[~removed_mask].head(n - len(removed_rows))
+    return full.loc[sorted([*removed_rows.index, *kept_rows.index])]
 
 
 @router.post("/datasets/{dataset_id}/preprocess-preview", response_model=PreprocessPreview)
@@ -243,10 +272,14 @@ async def preprocess_preview(
     session: SessionDep,
     op: str = "standardize",
     rows: int = 6,
+    column: str | None = None,
+    cmp: str = "lt",
+    value: float | None = None,
 ) -> PreprocessPreview:
-    """Show a few sample rows BEFORE and AFTER a preprocessing step, and which cells changed —
-    powers the Experiment Lab's animated 'watch the rows transform' preprocess node. Mirrors the
-    data-lab transforms (mean/median imputation, z-score / min-max scaling)."""
+    """Show sample rows BEFORE and AFTER a preprocessing step — powers the animated preprocess
+    node. Cell ops transform values (impute/scale/encode); row ops (drop_missing_rows,
+    filter_rows with column/cmp/value, e.g. 'remove rows where age < 18') mark whole rows
+    removed (red) vs kept (green)."""
     import pandas as pd
 
     if op not in _PREPROC_OPS:
@@ -262,6 +295,43 @@ async def preprocess_preview(
     num_cols = full.select_dtypes("number").columns.tolist()
     n = max(1, min(rows, 20))
 
+    # ---- row-level ops: rows are kept or removed wholesale (the paper's exact funnel steps) ----
+    if op in ("drop_missing_rows", "filter_rows"):
+        if op == "drop_missing_rows":
+            mask = full.isna().any(axis=1)  # True = row gets dropped
+            summary = (
+                f"removed every row with at least one missing value — "
+                f"{int(mask.sum())} of {len(full)} rows dropped, {int((~mask).sum())} remain"
+            )
+        else:
+            if not column or value is None:
+                raise HTTPException(status_code=400, detail="filter_rows needs column and value")
+            match = next(
+                (c for c in full.columns
+                 if str(c).lower() == column.lower() or column.lower() in str(c).lower()),
+                None,
+            )
+            if match is None or match not in num_cols:
+                raise HTTPException(status_code=400, detail=f"no numeric column matches '{column}'")
+            fn = _CMP.get(cmp)
+            if fn is None:
+                raise HTTPException(status_code=400, detail=f"cmp must be one of {sorted(_CMP)}")
+            mask = fn(full[match], value).fillna(False)
+            summary = (
+                f"removed rows where {match} {_CMP_WORD[cmp]} {value:g} — "
+                f"{int(mask.sum())} of {len(full)} rows dropped"
+            )
+        sample = _mixed_sample(full, mask, n)
+        cols = [str(c) for c in sample.columns]
+        srows = json.loads(sample.to_json(orient="records"))
+        removed = [bool(mask.loc[i]) for i in sample.index]
+        kept = [r for r, gone in zip(srows, removed, strict=False) if not gone]
+        return PreprocessPreview(
+            op=op, columns=cols, before=srows, after=kept,
+            changed=[[] for _ in srows], stats={}, summary=summary,
+            removed=removed, n_removed_total=int(mask.sum()), n_total=int(len(full)),
+        )
+
     # For imputation, prefer sample rows that actually contain missing values (so it's visible).
     if op in ("impute_mean", "impute_median") and num_cols:
         with_na = full[full[num_cols].isna().any(axis=1)]
@@ -272,7 +342,19 @@ async def preprocess_preview(
     before = sample.copy()
     after = sample.copy()
 
-    if op == "impute_mean":
+    if op == "encode":
+        obj_cols = [c for c in full.columns if c not in num_cols]
+        mapped = 0
+        for c in obj_cols:
+            cats = full[c].astype("category").cat.categories
+            mapping = {v: i for i, v in enumerate(cats)}
+            after[c] = before[c].map(mapping)
+            mapped += 1
+        summary = (
+            f"turned {mapped} text column(s) into numbers (each category gets a code, e.g. "
+            "no→0 / yes→1) — models can only do math on numbers"
+        )
+    elif op == "impute_mean":
         filled = 0
         for c in num_cols:
             filled += int(after[c].isna().sum())

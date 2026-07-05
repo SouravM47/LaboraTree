@@ -17,7 +17,9 @@ import {
 import "@xyflow/react/dist/style.css";
 import { animated, useSpring } from "@react-spring/web";
 import ModelAnimation, { isFeatureSelection, modelKind } from "@/components/ModelAnimation";
+import ResultsComparison from "@/components/ResultsComparison";
 import StagedModelAnimation from "@/components/StagedModelAnimation";
+import ModelExplainerCard from "@/components/ModelExplainerCard";
 import FeatureSelectionAnimation from "@/components/FeatureSelectionAnimation";
 
 /** A "model" node that is really a dedicated feature-selection step (BBO) — no model family named. */
@@ -37,6 +39,7 @@ import {
   type NodeRunResult,
   type PreprocessOp,
   type PreprocessPreview,
+  type RowFilter,
   type Unresolved,
   type WalkNode,
 } from "@/lib/api";
@@ -300,12 +303,14 @@ const nodeTypes = { phase: PhaseNode };
  * used to seed the animation's tunable knobs so defaults match the paper. */
 function paperHyperparams(
   params?: Record<string, unknown>,
-): Record<string, number | string> | undefined {
+): Record<string, number | string | string[]> | undefined {
   if (!params) return undefined;
-  const out: Record<string, number | string> = {};
+  const out: Record<string, number | string | string[]> = {};
   for (const [k, v] of Object.entries(params)) {
     if (k === "target" || k === "experiment_id") continue;
     if (typeof v === "number" || typeof v === "string") out[k] = v;
+    // the paper's selected feature subset rides along so the animation trains on ONLY those
+    if (k === "features" && Array.isArray(v)) out[k] = v.map(String);
   }
   return Object.keys(out).length ? out : undefined;
 }
@@ -533,6 +538,8 @@ export default function ExperimentCanvas({ paperId }: { paperId: string }) {
       const r = await Api.runNode(exp.id, backendNodeId, {
         dataset_id: datasetId,
         component_id: component || undefined,
+        // variant branches carry their own hyperparameters (saved from the animation's knobs)
+        params: node.id.startsWith("extra-") && node.params ? node.params : undefined,
       });
       setResults((m) => ({ ...m, [node.id]: r }));
       setStatus((m) => ({ ...m, [node.id]: "done" }));
@@ -542,11 +549,11 @@ export default function ExperimentCanvas({ paperId }: { paperId: string }) {
     }
   };
 
-  const addModel = (componentId: string, label: string) => {
+  const addModel = (componentId: string, label: string, params?: Record<string, unknown>) => {
     const id = `extra-${extras.length}-${componentId}`;
     setExtras((prev) => [
       ...prev,
-      { id, kind: "model", title: label, component_id: componentId },
+      { id, kind: "model", title: label, component_id: componentId, params },
     ]);
     focusNode(id);
   };
@@ -565,6 +572,13 @@ export default function ExperimentCanvas({ paperId }: { paperId: string }) {
         </span>
         <div className="flex items-center gap-3">
           <span className="text-sm text-muted">{journeyIds.length} steps · click a node</span>
+          <button
+            onClick={() => Api.downloadEvidenceBundle(exp.id).catch(() => {})}
+            title="Download the reproducibility receipts: paper claims + supporting quotes, dataset content hashes, pipeline, and every run's provenance-locked metrics + manifest"
+            className="rounded-lg border border-line px-3 py-1 text-xs font-medium text-forest transition hover:bg-bg"
+          >
+            ⬇ Evidence bundle
+          </button>
           <button
             onClick={async () => {
               setResults({});
@@ -679,6 +693,7 @@ export default function ExperimentCanvas({ paperId }: { paperId: string }) {
             models={models}
             status={selected ? statusFor(selected) : "idle"}
             result={selected ? results[selected.id] : undefined}
+            results={results}
             error={selected ? runErrors[selected.id] : undefined}
             onRun={runModel}
             onAddModel={addModel}
@@ -711,7 +726,7 @@ function EvaluationPanel({
   status: Record<string, Status>;
   models: ComponentSpecLite[];
   onFocus: (id: string) => void;
-  onAddModel: (componentId: string, label: string) => void;
+  onAddModel: (componentId: string, label: string, params?: Record<string, unknown>) => void;
   onRunAll: () => Promise<void>;
 }) {
   const [pick, setPick] = useState("");
@@ -867,6 +882,7 @@ function NodeDetail({
   models,
   status,
   result,
+  results,
   error,
   onRun,
   onAddModel,
@@ -876,12 +892,14 @@ function NodeDetail({
   models: ComponentSpecLite[];
   status: Status;
   result?: NodeRunResult;
+  results: Record<string, NodeRunResult>;
   error?: string;
   onRun: (node: WalkNode, datasetId: string, component: string) => Promise<void>;
-  onAddModel: (componentId: string, label: string) => void;
+  onAddModel: (componentId: string, label: string, params?: Record<string, unknown>) => void;
 }) {
   const [datasetId, setDatasetId] = useState(exp.fetch_report.fetched[0]?.dataset_id ?? "");
   const [addPick, setAddPick] = useState("");
+  const [showExplain, setShowExplain] = useState(false);
 
   if (!node) {
     return (
@@ -927,6 +945,22 @@ function NodeDetail({
 
       {isModel && (
         <div className="mt-3">
+          <button
+            onClick={() => setShowExplain(true)}
+            className="mb-2 flex items-center gap-1.5 rounded-lg border border-leaf/50 bg-leaf/10 px-3 py-1.5 text-xs font-medium text-forest hover:bg-leaf/20"
+          >
+            📖 New to {node.title}? Learn it from zero
+          </button>
+          {showExplain && (
+            <ModelExplainerCard
+              family={modelKind(node.title || node.component_id || "")}
+              modelName={node.title}
+              datasetId={exp.fetch_report.fetched[0]?.dataset_id}
+              target={(node.params?.target as string) || ""}
+              initialParams={paperHyperparams(node.params)}
+              onClose={() => setShowExplain(false)}
+            />
+          )}
           {exp.fetch_report.fetched.length > 0 ? (
             <StagedModelAnimation
               datasetId={exp.fetch_report.fetched[0].dataset_id}
@@ -934,6 +968,13 @@ function NodeDetail({
               family={modelKind(node.title || node.component_id || "")}
               title={node.title}
               initialParams={paperHyperparams(node.params)}
+              onSaveVariant={(p) =>
+                onAddModel(
+                  node.component_id ?? node.suggested_component ?? "model.ml.gradient_boosting",
+                  `${node.title} (tweaked)`,
+                  { ...(node.params ?? {}), ...p },
+                )
+              }
             />
           ) : (
             <ModelAnimation kind={modelKind(node.title || node.component_id || "")} />
@@ -960,6 +1001,8 @@ function NodeDetail({
         <EdaPanel exp={exp} />
       ) : node.kind === "preprocess" ? (
         isSplit(node.title) ? <TrainTestSplitPanel exp={exp} /> : <PreprocessPanel exp={exp} node={node} />
+      ) : node.kind === "result" || node.kind === "inference" ? (
+        <ResultsComparison node={node} exp={exp} results={results} primary={primaryMetric} />
       ) : !isModel ? (
         <p className="mt-3 text-sm text-muted">
           {isFeatSel
@@ -1257,28 +1300,74 @@ function featureVsTargetSpec(
       ],
     } as Record<string, unknown>;
   }
-  const values = rows
-    .map((r) => ({ v: Number(r[feature]), t: String(r[target] ?? "—") }))
+  // Classification: the sigmoid-style view — each patient is a dot at 0 (one class) or 1 (the
+  // other), jittered so dots don't stack; dashed lines mark what 0 and 1 MEAN; the green curve is
+  // the observed probability of the positive class as this feature increases (an S-ish curve =
+  // strong predictor, a flat line = uninformative).
+  const classes = Array.from(
+    new Set(rows.map((r) => String(r[target] ?? "—")).filter((t) => t !== "—")),
+  ).sort();
+  const neg = classes[0] ?? "0";
+  const pos = classes[1] ?? "1";
+  const pts = rows
+    .map((r) => ({
+      v: Number(r[feature]),
+      y: String(r[target]) === pos ? 1 : 0,
+      t: String(r[target] ?? "—"),
+    }))
     .filter((d) => Number.isFinite(d.v));
+  // observed P(pos) per feature bin → the empirical "sigmoid"
+  const xs = pts.map((p) => p.v);
+  const [lo, hi] = [Math.min(...xs), Math.max(...xs)];
+  const BINS = 8;
+  const curve: { v: number; p: number }[] = [];
+  for (let b = 0; b < BINS; b++) {
+    const b0 = lo + ((hi - lo) * b) / BINS;
+    const b1 = lo + ((hi - lo) * (b + 1)) / BINS;
+    const inBin = pts.filter((p) => p.v >= b0 && (b === BINS - 1 ? p.v <= b1 : p.v < b1));
+    if (inBin.length >= 3)
+      curve.push({ v: (b0 + b1) / 2, p: inBin.reduce((s, p) => s + p.y, 0) / inBin.length });
+  }
   return {
     $schema: "https://vega.github.io/schema/vega-lite/v5.json",
-    data: { values },
     width: 220,
-    height: 110,
+    height: 120,
     layer: [
       {
-        mark: { type: "bar", opacity: 0.6 },
+        data: { values: [{ y: 1, label: `1 = ${pos}` }, { y: 0, label: `0 = ${neg}` }] },
+        mark: { type: "rule", strokeDash: [5, 4], color: "#7C8A80" },
+        encoding: { y: { field: "y", type: "quantitative", axis: { title: `P(${pos})`, values: [0, 0.5, 1] } } },
+      },
+      {
+        data: { values: [{ y: 1, label: `1 = ${pos}` }, { y: 0, label: `0 = ${neg}` }] },
+        mark: { type: "text", align: "left", dx: 3, dy: -6, fontSize: 9, color: "#7C8A80" },
         encoding: {
-          x: { field: "v", bin: { maxbins: 15 }, type: "quantitative", axis: { title: feature } },
-          y: { aggregate: "count", type: "quantitative", stack: null, axis: { title: null } },
-          color: { field: "t", type: "nominal", legend: { title: target }, scale: { scheme: "set1" } },
+          y: { field: "y", type: "quantitative" },
+          x: { value: 0 },
+          text: { field: "label" },
         },
       },
       {
-        mark: { type: "rule", strokeWidth: 2, strokeDash: [4, 3] },
+        data: { values: pts },
+        mark: { type: "circle", opacity: 0.35, size: 26 },
+        transform: [{ calculate: "datum.y + (random() - 0.5) * 0.12", as: "yj" }],
         encoding: {
-          x: { aggregate: "mean", field: "v", type: "quantitative" },
-          color: { field: "t", type: "nominal", legend: null },
+          x: { field: "v", type: "quantitative", axis: { title: feature } },
+          y: { field: "yj", type: "quantitative", scale: { domain: [-0.15, 1.15] }, axis: null },
+          color: {
+            field: "t",
+            type: "nominal",
+            legend: { title: null, orient: "top" },
+            scale: { domain: [neg, pos], range: ["#C0392B", "#6DB33F"] },
+          },
+        },
+      },
+      {
+        data: { values: curve },
+        mark: { type: "line", color: "#14342A", strokeWidth: 2.5, interpolate: "monotone", point: true },
+        encoding: {
+          x: { field: "v", type: "quantitative" },
+          y: { field: "p", type: "quantitative" },
         },
       },
     ],
@@ -1465,11 +1554,10 @@ function EdaColumn({
             <div className="mt-2 border-t border-line/60 pt-2">
               <p className="mb-1 text-[11px] text-muted">
                 vs target <span className="text-forest">{target}</span>
-                {targetNumeric ? " (scatter + trend line)" : " (split by class, dashed = class mean)"}
                 {" — "}
                 {targetNumeric
-                  ? "if the trend line clearly slopes, this feature helps predict the target."
-                  : "if the two colors sit apart (different means), this feature helps tell the classes apart; if they overlap fully it adds little."}
+                  ? "each dot is one row (scatter + trend line); if the trend line clearly slopes, this feature helps predict the target."
+                  : "each dot is one patient, sitting on the dashed line of its class (1 = top, 0 = bottom); the dark curve is how the CHANCE of the top class changes as this feature grows — an S-shaped or sloping curve = strong predictor, a flat curve = adds little."}
               </p>
               <VegaChart spec={featureVsTargetSpec(rows, c.name, target, targetNumeric)} />
             </div>
@@ -1636,6 +1724,9 @@ const PREPROC_LABELS: Record<PreprocessOp, string> = {
   impute_median: "Fill missing → column median",
   standardize: "Standardize (z-score)",
   minmax: "Scale to 0–1 (min–max)",
+  drop_missing_rows: "Remove rows with missing values",
+  filter_rows: "Remove rows by condition",
+  encode: "Encode categories → numbers",
 };
 
 // Why each step exists — in words anyone can follow (shown above the animation).
@@ -1648,7 +1739,44 @@ const PREPROC_WHY: Record<PreprocessOp, string> = {
     "Columns live on wildly different scales (age ~50, hemoglobin ~13). Distance- and weight-based models would let the big-number column shout over the rest. Standardizing re-expresses every value as 'how many spreads above/below its column's average' so every feature speaks at the same volume.",
   minmax:
     "Squeezes every column into the same 0-to-1 range (0 = that column's smallest value, 1 = its largest) so no feature dominates just because its numbers are bigger. Popular for neural networks.",
+  drop_missing_rows:
+    "The strictest way to handle holes: any row with even one missing value is thrown out entirely. You lose data (sometimes a lot), but every remaining row is fully trustworthy — no guessed values. Papers often build one 'complete rows only' set this way and compare it against a mean-filled set.",
+  filter_rows:
+    "Some rows simply don't belong in the study — outside the age range, impossible values, wrong population. This step removes them by a rule so the model only ever learns from rows that match the paper's inclusion criteria.",
+  encode:
+    "Models can only do math on numbers, but columns like 'yes/no' or 'normal/abnormal' are text. Encoding gives each category a number (no→0, yes→1) so those columns can join the math — without changing what they mean.",
 };
+
+/** Parse the paper's own funnel step (title + detail) into the exact operation to animate —
+ *  including row filters like "remove rows where age is less than 18". */
+function inferOpRich(text: string): { op: PreprocessOp; filter?: RowFilter } {
+  const t = (text || "").toLowerCase();
+  // row filter: (remove|drop|exclude|filter|discard) ... <col> ... (less than|under|>|≥...) <number>
+  const m = t.match(
+    /(?:remov\w*|drop\w*|exclud\w*|filter\w*|discard\w*|delet\w*)[^.;]*?\b([a-z_][a-z0-9_ ]{1,24}?)\s*(?:is |are |was |be |)(less than or equal|greater than or equal|less than|greater than|below|under|above|over|at least|at most|>=|<=|>|<|=|equal to)\s*(\d+(?:\.\d+)?)/,
+  );
+  if (m) {
+    const cmpMap: Record<string, RowFilter["cmp"]> = {
+      "less than": "lt", below: "lt", under: "lt", "<": "lt",
+      "greater than": "gt", above: "gt", over: "gt", ">": "gt",
+      "less than or equal": "le", "at most": "le", "<=": "le",
+      "greater than or equal": "ge", "at least": "ge", ">=": "ge",
+      "=": "eq", "equal to": "eq",
+    };
+    const col = m[1].trim().split(/\s+/).slice(-2).join(" "); // last word(s) before the comparator
+    return { op: "filter_rows", filter: { column: col, cmp: cmpMap[m[2]] ?? "lt", value: Number(m[3]) } };
+  }
+  if (/(remov|drop|delet|discard|exclud|elimina)\w*[^.;]*(missing|null|incomplete|na\b|empty)/.test(t) ||
+      /(complete case|without missing|no missing)/.test(t))
+    return { op: "drop_missing_rows" };
+  if (/(encod|one.?hot|label encod|categor\w+ (?:to|into) num|convert\w*[^.;]*(numeric|binary)|nominal)/.test(t))
+    return { op: "encode" };
+  if (t.includes("median")) return { op: "impute_median" };
+  if (/(mean|imput|fill|replac\w*[^.;]*missing)/.test(t)) return { op: "impute_mean" };
+  if (t.includes("min") && t.includes("max")) return { op: "minmax" };
+  if (t.includes("normal")) return { op: "minmax" };
+  return { op: "standardize" };
+}
 
 function inferOp(title: string): PreprocessOp {
   const t = title.toLowerCase();
@@ -1701,7 +1829,9 @@ function AnimatedCell({
 function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
   const fetched = exp.fetch_report.fetched;
   const [dsId, setDsId] = useState(fetched[0]?.dataset_id ?? "");
-  const [op, setOp] = useState<PreprocessOp>(inferOp(node.title));
+  // the PAPER's exact funnel step, parsed from this node's title + detail
+  const inferred = inferOpRich(`${node.title}. ${node.detail ?? ""}`);
+  const [op, setOp] = useState<PreprocessOp>(inferred.op);
   const [pv, setPv] = useState<PreprocessPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1713,13 +1843,18 @@ function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
     setBusy(true);
     setError(null);
     setActive(false);
-    Api.preprocessPreview(dsId, op, 6)
+    const req =
+      op === "filter_rows" && inferred.filter
+        ? Api.preprocessPreviewFilter(dsId, inferred.filter, 8)
+        : Api.preprocessPreview(dsId, op === "filter_rows" ? "drop_missing_rows" : op, op === "drop_missing_rows" ? 8 : 6);
+    req
       .then((p) => alive && setPv(p))
       .catch((e) => alive && setError(e instanceof Error ? e.message : "preview failed"))
       .finally(() => alive && setBusy(false));
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dsId, op]);
 
   if (fetched.length === 0) {
@@ -1785,7 +1920,9 @@ function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
       {error && <p className="text-red-600">{error}</p>}
       {busy && <p className="text-muted">Loading…</p>}
 
-      {pv && cols.length > 0 && (
+      {pv && pv.removed && <RowDropTable pv={pv} active={active} />}
+
+      {pv && !pv.removed && cols.length > 0 && (
         <>
           <div className="overflow-auto rounded-lg border border-line" style={{ maxHeight: 240 }}>
             <table className="min-w-full text-xs">
@@ -1824,6 +1961,78 @@ function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
         </>
       )}
     </div>
+  );
+}
+
+/** Row-level funnel steps (drop missing / filter by rule): red rows leave, green rows stay.
+ *  On Transform the red rows fade + strike through, and the counts tell the whole-dataset story. */
+function RowDropTable({ pv, active }: { pv: PreprocessPreview; active: boolean }) {
+  const cols = pv.columns.slice(0, 7);
+  const removed = pv.removed ?? [];
+  return (
+    <>
+      <div className="overflow-auto rounded-lg border border-line" style={{ maxHeight: 260 }}>
+        <table className="min-w-full text-xs">
+          <thead className="sticky top-0 bg-bg">
+            <tr>
+              <th className="px-2 py-1 text-left font-medium text-muted">fate</th>
+              {cols.map((c) => (
+                <th key={c} className="whitespace-nowrap px-2 py-1 text-left font-medium text-forest">
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pv.before.map((row, i) => {
+              const gone = removed[i];
+              return (
+                <tr
+                  key={i}
+                  className={`border-t border-line/60 transition-all duration-700 ${
+                    gone ? "bg-red-50" : "bg-green-50/50"
+                  } ${gone && active ? "line-through opacity-25" : ""}`}
+                >
+                  <td className={`whitespace-nowrap px-2 py-1 text-[11px] font-semibold ${gone ? "text-red-600" : "text-green-700"}`}>
+                    {gone ? (active ? "✗ removed" : "✗ will be removed") : "✓ stays"}
+                  </td>
+                  {cols.map((c) => (
+                    <td key={c} className="whitespace-nowrap px-2 py-1 text-ink">
+                      {row[c] == null ? (
+                        <span className="rounded bg-red-100 px-1 font-semibold text-red-600">?</span>
+                      ) : (
+                        String(row[c])
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted">
+        {active ? (
+          <>
+            <span className="font-medium text-forest">After:</span> {pv.summary}
+            {pv.n_removed_total != null && pv.n_total != null && (
+              <>
+                {" "}
+                — the dataset shrinks from <b>{pv.n_total}</b> to{" "}
+                <b>{pv.n_total - pv.n_removed_total}</b> rows.
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="font-medium text-forest">Before:</span> sample rows —{" "}
+            <span className="text-red-600">red will be removed</span>,{" "}
+            <span className="text-green-700">green stays</span> (? = missing value). Press
+            Transform ▶ to apply the paper&apos;s rule.
+          </>
+        )}
+      </p>
+    </>
   );
 }
 
@@ -1916,19 +2125,68 @@ function DataPanel({ exp, onChange }: { exp: Experiment; onChange: (e: Experimen
     }
   }
 
+  async function refetch() {
+    setBusy(true);
+    setError(null);
+    try {
+      onChange(await Api.refetchData(exp.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "auto-fetch failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const hasReal = exp.fetch_report.fetched.some((f) => !f.synthetic);
+  const hasMaster = exp.fetch_report.fetched.some((f) => f.resolver === "master");
+
+  async function buildMaster() {
+    setBusy(true);
+    setError(null);
+    try {
+      onChange(await Api.buildMasterDataset(exp.id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "master build failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="rounded-2xl border border-line bg-white p-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h3 className="font-display text-lg text-forest">Data</h3>
-        <button
-          onClick={genDemo}
-          disabled={busy}
-          className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
-            empty ? "bg-leaf text-white hover:opacity-90" : "border border-line text-forest hover:bg-bg"
-          } disabled:opacity-50`}
-        >
-          {busy ? "Generating…" : "Generate demo data"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={refetch}
+            disabled={busy}
+            title="Search OpenML + the UCI repository for the paper's real dataset and pull it in"
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+              !hasReal ? "bg-forest text-white hover:opacity-90" : "border border-line text-forest hover:bg-bg"
+            } disabled:opacity-50`}
+          >
+            {busy ? "Working…" : "⟳ Auto-fetch real dataset"}
+          </button>
+          {exp.fetch_report.fetched.length > 1 && !hasMaster && (
+            <button
+              onClick={buildMaster}
+              disabled={busy}
+              title="Consolidate every fetched/uploaded dataset into ONE master table (columns aligned, duplicates dropped) that the whole pipeline runs on"
+              className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-forest hover:bg-bg disabled:opacity-50"
+            >
+              {busy ? "Working…" : "⧉ Build master dataset"}
+            </button>
+          )}
+          <button
+            onClick={genDemo}
+            disabled={busy}
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+              empty ? "bg-leaf text-white hover:opacity-90" : "border border-line text-forest hover:bg-bg"
+            } disabled:opacity-50`}
+          >
+            {busy ? "Working…" : "Generate demo data"}
+          </button>
+        </div>
       </div>
 
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}

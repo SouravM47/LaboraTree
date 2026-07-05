@@ -353,6 +353,26 @@ export type ModelTrace = {
   params?: Record<string, number | string> | null; // the values used to fit
   note: string;
 };
+export type ExplainerMath = {
+  name: string;
+  formula: string;
+  plain: string;
+  symbols: { sym: string; means: string }[];
+  worked_example: string;
+};
+export type ExplainerTable = { caption: string; columns: string[]; rows: string[][] };
+export type ModelExplainer = {
+  family: string;
+  title: string;
+  one_liner: string;
+  analogy: string;
+  how_it_works: string[];
+  math: ExplainerMath[];
+  example_table: ExplainerTable | null;
+  when_to_use: string;
+  watch_out_for: string[];
+  references: { title: string; url: string }[];
+};
 export type ParamSpec = {
   key: string;
   label: string;
@@ -669,6 +689,8 @@ export const Api = {
     apiGet<DatasetPreview>(`/api/datasets/${datasetId}/preview?rows=${rows}`),
   datasetProfile: (datasetId: string) =>
     apiGet<DatasetProfile>(`/api/datasets/${datasetId}/profile`),
+  modelExplainer: (family: string) =>
+    apiGet<ModelExplainer>(`/api/models/${family}/explainer`),
   modelTrace: (
     datasetId: string,
     target: string,
