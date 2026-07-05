@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Api, type Paper, type PaperCardData } from "@/lib/api";
 import FileDropzone from "@/components/FileDropzone";
 import PaperCard from "@/components/PaperCard";
+import PaperCompare from "@/components/PaperCompare";
 import ChatPanel from "@/components/ChatPanel";
 import ExperimentCanvas from "@/components/ExperimentCanvas";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -15,6 +16,8 @@ export default function PapersLab({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Paper | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
+  const [comparing, setComparing] = useState(false);
 
   useEffect(() => {
     Api.listPapers(projectId).then(setPapers).catch(() => setPapers([]));
@@ -63,6 +66,21 @@ export default function PapersLab({ projectId }: { projectId: string }) {
     );
   }
 
+  if (comparing) {
+    return (
+      <PaperCompare
+        papers={papers.filter((p) => compareIds.has(p.id))}
+        onClose={() => setComparing(false)}
+        onOpen={(p) => {
+          setComparing(false);
+          setSelected(p);
+        }}
+      />
+    );
+  }
+
+  const comparable = papers.filter((p) => hasCard(p.card));
+
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-line bg-white p-5">
@@ -83,10 +101,44 @@ export default function PapersLab({ projectId }: { projectId: string }) {
 
       {papers.length > 0 && (
         <div className="rounded-2xl border border-line bg-white p-5">
-          <h3 className="font-display text-lg text-forest">Papers</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-display text-lg text-forest">Papers</h3>
+            {comparable.length >= 2 && (
+              <button
+                onClick={() => setComparing(true)}
+                disabled={compareIds.size < 2}
+                title={
+                  compareIds.size < 2
+                    ? "Tick 2+ papers (with cards) to compare them side-by-side"
+                    : "Compare the ticked papers side-by-side"
+                }
+                className="rounded-lg border border-line px-3 py-1 text-sm font-medium text-forest hover:bg-bg disabled:opacity-40"
+              >
+                ⇄ Compare{compareIds.size >= 2 ? ` (${compareIds.size})` : ""}
+              </button>
+            )}
+          </div>
           <ul className="mt-3 divide-y divide-line">
             {papers.map((p) => (
               <li key={p.id} className="flex items-center gap-2">
+                {comparable.length >= 2 && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${p.title} for comparison`}
+                    disabled={!hasCard(p.card)}
+                    title={hasCard(p.card) ? "Select for comparison" : "Generate this paper's card first"}
+                    checked={compareIds.has(p.id)}
+                    onChange={(e) =>
+                      setCompareIds((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(p.id);
+                        else next.delete(p.id);
+                        return next;
+                      })
+                    }
+                    className="h-4 w-4 accent-[#14342A] disabled:opacity-30"
+                  />
+                )}
                 <button
                   onClick={() => setSelected(p)}
                   className="flex flex-1 items-center justify-between py-3 text-left hover:text-forest"
@@ -187,7 +239,7 @@ function PaperDetail({
                     : "border-transparent text-muted hover:text-forest"
                 }`}
               >
-                {m === "study" ? "Study" : "Experiment"}
+                {m === "study" ? "Study" : "Experiment Ground"}
               </button>
             ))}
           </div>

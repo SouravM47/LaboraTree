@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Api,
   type CardModel,
@@ -9,10 +9,75 @@ import {
   type EmpiricalCard,
   type PaperCardData,
 } from "@/lib/api";
+import ModelExplainerCard from "@/components/ModelExplainerCard";
+import { modelKind } from "@/components/ModelAnimation";
 
 export default function PaperCard({ paperId, card }: { paperId: string; card: PaperCardData }) {
   if (card.paper_type === "conceptual") return <Conceptual paperId={paperId} card={card} />;
   return <Empirical paperId={paperId} card={card} />;
+}
+
+/** Claim receipt: green "✓ in paper" (hover = the exact supporting sentence) when the grounding
+ *  pass found the claim's numbers in the paper text; amber "unverified" when a numeric claim has
+ *  no support — honesty over confidence. */
+export function Verified({
+  card,
+  k,
+  claim,
+}: {
+  card: EmpiricalCard;
+  k: string;
+  claim?: string;
+}) {
+  const refs = card.grounding?.[k];
+  if (refs?.length) {
+    const r = refs[0];
+    return (
+      <span
+        title={`Paper §${r.ordinal}: “${r.quote}”`}
+        className="ml-1.5 inline-flex cursor-help items-center gap-0.5 rounded-full bg-green-100 px-1.5 py-0.5 align-middle text-[10px] font-medium text-green-700"
+      >
+        ✓ in paper §{r.ordinal}
+      </span>
+    );
+  }
+  if (card.grounding && claim && /\d/.test(claim)) {
+    return (
+      <span
+        title="The grounding pass could not find these numbers in the paper text — double-check before citing."
+        className="ml-1.5 inline-flex cursor-help items-center rounded-full bg-amber-100 px-1.5 py-0.5 align-middle text-[10px] font-medium text-amber-800"
+      >
+        ⚠ unverified
+      </span>
+    );
+  }
+  return null;
+}
+
+/** Mint + copy the public read-only report link. */
+function ShareButton({ paperId }: { paperId: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "copied" | "error">("idle");
+  return (
+    <button
+      onClick={async () => {
+        setState("busy");
+        try {
+          const { path } = await Api.sharePaper(paperId);
+          await navigator.clipboard.writeText(`${window.location.origin}${path}`);
+          setState("copied");
+          setTimeout(() => setState("idle"), 2500);
+        } catch {
+          setState("error");
+          setTimeout(() => setState("idle"), 2500);
+        }
+      }}
+      disabled={state === "busy"}
+      className="rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-forest hover:bg-bg disabled:opacity-50"
+      title="Copy a public read-only link to this paper's report"
+    >
+      {state === "copied" ? "✓ link copied" : state === "error" ? "couldn't copy" : "⤴ Share report"}
+    </button>
+  );
 }
 
 /* ---------------- empirical ---------------- */
@@ -21,7 +86,10 @@ function Empirical({ paperId, card }: { paperId: string; card: EmpiricalCard }) 
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-line bg-white p-5">
-        <h3 className="font-display text-lg text-forest">Problem</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-lg text-forest">Problem</h3>
+          <ShareButton paperId={paperId} />
+        </div>
         {card.problem_statement.one_liner && (
           <p className="mt-1 font-medium text-ink">{card.problem_statement.one_liner}</p>
         )}
@@ -71,6 +139,7 @@ function Empirical({ paperId, card }: { paperId: string; card: EmpiricalCard }) 
                 <li key={i}>
                   <span className="font-medium text-forest">{name}</span>
                   {desc && <span className="text-ink"> — {desc}</span>}
+                  <Verified card={card} k={`variant:${i}`} claim={desc} />
                 </li>
               );
             })}
@@ -92,6 +161,7 @@ function Empirical({ paperId, card }: { paperId: string; card: EmpiricalCard }) 
               <span>
                 <span className="font-medium">Best model: </span>
                 {card.best_model}
+                <Verified card={card} k="best_model" claim={card.best_model} />
               </span>
             </div>
           )}
@@ -99,14 +169,15 @@ function Empirical({ paperId, card }: { paperId: string; card: EmpiricalCard }) 
             <div className="mt-3">
               <p className="text-xs uppercase tracking-wide text-leaf">How each model did</p>
               <ul className="mt-2 space-y-2 text-sm">
-                {card.models_used
-                  .filter((m) => m.result)
-                  .map((m, i) => (
+                {card.models_used.map((m, i) =>
+                  m.result ? (
                     <li key={i}>
                       <span className="font-medium text-forest">{m.name}: </span>
                       <span className="text-ink">{m.result}</span>
+                      <Verified card={card} k={`model:${i}`} claim={m.result} />
                     </li>
-                  ))}
+                  ) : null,
+                )}
               </ul>
               <p className="mt-2 text-xs text-muted">Click a model above for its math, worked with real data.</p>
             </div>
@@ -114,7 +185,13 @@ function Empirical({ paperId, card }: { paperId: string; card: EmpiricalCard }) 
         </div>
       )}
 
-      <SimplifyCard paperId={paperId} title="Results" field="results" text={card.results} />
+      <SimplifyCard
+        paperId={paperId}
+        title="Results"
+        field="results"
+        text={card.results}
+        badge={<Verified card={card} k="results" claim={card.results} />}
+      />
       <SimplifyCard paperId={paperId} title="Inference" field="inference" text={card.inference} />
     </div>
   );
@@ -140,12 +217,26 @@ function VariablePop({ v, tone }: { v: CardVariable; tone?: "forest" }) {
 }
 
 function ModelPop({ m }: { m: CardModel }) {
+  const [learn, setLearn] = useState(false);
   return (
     <Pop
       label={m.name}
       wide
       body={
         <div className="space-y-2">
+          <button
+            onClick={() => setLearn(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-leaf/50 bg-leaf/10 px-2.5 py-1 text-xs font-medium text-forest hover:bg-leaf/20"
+          >
+            📖 New to {m.name}? Learn it from zero
+          </button>
+          {learn && (
+            <ModelExplainerCard
+              family={modelKind(m.name)}
+              modelName={m.name}
+              onClose={() => setLearn(false)}
+            />
+          )}
           {m.universal && (
             <div>
               <p className="text-xs uppercase tracking-wide text-leaf">What it is</p>
@@ -222,35 +313,35 @@ function VariablesTable({ card }: { card: EmpiricalCard }) {
         </span>
       </button>
       {open && (
-        <div className="mt-3 overflow-auto rounded-lg border border-line">
-          <table className="min-w-full text-sm">
-            <thead className="bg-bg text-left text-xs uppercase tracking-wide text-muted">
+        <div className="mt-3 max-h-[26rem] overflow-auto rounded-lg border border-line">
+          <table className="w-full table-fixed text-xs">
+            <thead className="sticky top-0 bg-bg text-left text-[10px] uppercase tracking-wide text-muted">
               <tr>
-                <th className="px-3 py-2">Variable</th>
-                <th className="px-3 py-2">Role</th>
-                <th className="px-3 py-2">Type</th>
-                <th className="px-3 py-2">Units</th>
-                <th className="px-3 py-2">Description</th>
-                <th className="px-3 py-2">Example</th>
+                <th className="w-[12%] px-2 py-1.5">Variable</th>
+                <th className="w-[10%] px-2 py-1.5">Role</th>
+                <th className="w-[12%] px-2 py-1.5">Type</th>
+                <th className="w-[10%] px-2 py-1.5">Units</th>
+                <th className="w-[44%] px-2 py-1.5">Description</th>
+                <th className="w-[12%] px-2 py-1.5">Example</th>
               </tr>
             </thead>
             <tbody>
               {rows.map(({ v, role }, i) => (
-                <tr key={i} className="border-t border-line/60">
-                  <td className="whitespace-nowrap px-3 py-2 font-medium text-forest">{v.name}</td>
-                  <td className="px-3 py-2">
+                <tr key={i} className="border-t border-line/60 align-top">
+                  <td className="break-words px-2 py-1.5 font-medium text-forest">{v.name}</td>
+                  <td className="px-2 py-1.5">
                     <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
+                      className={`rounded-full px-1.5 py-0.5 text-[10px] ${
                         role === "Target" ? "bg-forest text-white" : "bg-sprout/30 text-forest"
                       }`}
                     >
                       {role}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-ink">{v.type || "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-ink">{v.units || "—"}</td>
-                  <td className="px-3 py-2 text-muted">{v.description || "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-ink">{v.example_value || "—"}</td>
+                  <td className="break-words px-2 py-1.5 text-ink">{v.type || "—"}</td>
+                  <td className="break-words px-2 py-1.5 text-ink">{v.units || "—"}</td>
+                  <td className="break-words px-2 py-1.5 leading-snug text-muted">{v.description || "—"}</td>
+                  <td className="break-words px-2 py-1.5 text-ink">{v.example_value || "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -448,14 +539,17 @@ function SimplifyBlock({
 }
 
 function SimplifyCard({
-  paperId, title, field, text,
+  paperId, title, field, text, badge,
 }: {
-  paperId: string; title: string; field: string; text: string;
+  paperId: string; title: string; field: string; text: string; badge?: ReactNode;
 }) {
   return (
     <div className="rounded-2xl border border-line bg-white p-5">
       <SimplifyBlock paperId={paperId} field={field} title={title}>
-        <p className="mt-1 text-sm text-ink">{text || "—"}</p>
+        <p className="mt-1 text-sm text-ink">
+          {text || "—"}
+          {badge}
+        </p>
       </SimplifyBlock>
     </div>
   );
