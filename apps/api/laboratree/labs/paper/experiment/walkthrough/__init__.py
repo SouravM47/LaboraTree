@@ -148,8 +148,13 @@ _GENERIC_PP = (
 
 
 def _is_generic_preprocess(pp: str) -> bool:
-    low = str(pp).lower()
-    if "split" in low:                       # train/test split is a real, distinct funnel step
+    """Skip ONLY bare, boilerplate steps (e.g. 'Standardize the features', 'Handle missing values')
+    that are offered as model choices instead. Any DESCRIBED, paper-specific step — even one that
+    mentions standardizing/imputing among its specifics — stays in the funnel."""
+    low = str(pp).strip().lower()
+    if "split" in low:                        # train/test split is a real, distinct funnel step
+        return False
+    if len(low.split()) > 4:                  # a described step is paper-specific → keep it
         return False
     return any(g in low for g in _GENERIC_PP)
 

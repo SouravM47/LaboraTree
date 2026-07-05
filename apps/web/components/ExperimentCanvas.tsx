@@ -1789,13 +1789,41 @@ function inferOp(title: string): PreprocessOp {
   return "standardize";
 }
 
+/** Age / numeric INCLUSION criteria ("keeps women aged 18 or older", "at least 18", "18+", excludes
+ *  those "under 18") → the row-removal condition that enforces it (remove age < 18). */
+function inferInclusionFilter(t: string): RowFilter | undefined {
+  const older =
+    t.match(/\bage[d]?\s*(?:of\s*)?(\d{1,3})\s*(?:years?\s*)?(?:or|and|)\s*(?:older|above|over|up|plus)\b/) ||
+    t.match(/\b(\d{1,3})\s*(?:years?\s*)?(?:or|and)\s*(?:older|above|over|up)\b/) ||
+    t.match(/\bat least\s*(\d{1,3})\s*(?:years?)?\b/) ||
+    t.match(/\bolder than\s*(\d{1,3})\b/) ||
+    t.match(/\b(\d{1,3})\s*\+\b/);
+  if (older) return { column: "age", cmp: "lt", value: Number(older[1]) }; // keep ≥ N ⇒ drop < N
+  const under =
+    t.match(/\bunder\s*(?:age\s*)?(\d{1,3})\b/) ||
+    t.match(/\byounger than\s*(\d{1,3})\b/) ||
+    t.match(/\bbelow\s*(?:age\s*)?(\d{1,3})\b/);
+  if (under) return { column: "age", cmp: "lt", value: Number(under[1]) }; // exclude the young ⇒ drop < N
+  return undefined;
+}
+
 /** Parse EVERY operation the paper's funnel step mentions — a step like "remove incomplete records
- *  AND standardize income" is two operations, so we show both (each animatable), not just one. */
+ *  AND standardize income" is two operations, so we show both (each animatable), not just one.
+ *  Selection/inclusion steps ("keep women aged 18+…") are row FILTERS, never standardization. */
 function inferOpsRich(text: string): { ops: PreprocessOp[]; filter?: RowFilter } {
   const t = (text || "").toLowerCase();
   const ops: PreprocessOp[] = [];
   const rich = inferOpRich(text);
-  if (rich.op === "filter_rows" && rich.filter) ops.push("filter_rows");
+  let filter = rich.filter;
+  if (rich.op === "filter_rows" && rich.filter) {
+    ops.push("filter_rows");
+  } else {
+    const inc = inferInclusionFilter(t);
+    if (inc) {
+      ops.push("filter_rows");
+      filter = inc;
+    }
+  }
   if (/(remov|drop|delet|discard|exclud|elimina)\w*[^.;]*(missing|null|incomplete|\bna\b|empty)/.test(t) ||
       /(complete case|without missing|no missing|listwise)/.test(t))
     ops.push("drop_missing_rows");
@@ -1805,8 +1833,13 @@ function inferOpsRich(text: string): { ops: PreprocessOp[]; filter?: RowFilter }
   else if (/(\bmean\b|imput|fill\w*[^.;]*missing|replac\w*[^.;]*missing)/.test(t)) ops.push("impute_mean");
   if ((t.includes("min") && t.includes("max")) || /normali[sz]/.test(t)) ops.push("minmax");
   if (/standardi[sz]|z-?score|constant .*price|deflat/.test(t)) ops.push("standardize");
+
   const uniq = [...new Set(ops)];
-  return { ops: uniq.length ? uniq : [inferOp(text)], filter: rich.filter };
+  if (uniq.length) return { ops: uniq, filter };
+  // nothing explicit: a SELECTION/inclusion step is a filter; otherwise fall back to standardize
+  if (/\b(keep|kept|retain|includ|\bonly\b|restrict|eligib|inclusion|subset|sample keeps|population|criteria|currently married|never married|unmarried)\b/.test(t))
+    return { ops: ["filter_rows"], filter };
+  return { ops: [inferOp(text)], filter };
 }
 
 function AnimatedCell({
