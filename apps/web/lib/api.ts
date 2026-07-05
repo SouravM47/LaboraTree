@@ -195,6 +195,10 @@ export type WalkNode = {
   component_id?: string | null;
   available?: boolean;              // false when the paper's model isn't a registered component
   suggested_component?: string;     // comparable stand-in to run instead
+  // for preprocess nodes: the LLM's structured classification of the operation (+ any row filter),
+  // so the UI renders the right animation instead of guessing from the title text.
+  op?: PreprocessOp | "model_spec" | "split" | "none" | string;
+  filter?: RowFilter;
   params?: Record<string, unknown>;
 };
 export type FetchedDataset = {

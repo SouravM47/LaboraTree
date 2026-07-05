@@ -1807,6 +1807,14 @@ function inferInclusionFilter(t: string): RowFilter | undefined {
   return undefined;
 }
 
+/** True when a "preprocess" step is really a MODEL-SPECIFICATION choice (fixed effects, clustered/
+ *  robust standard errors, control variables, interaction terms) — it changes how the model is
+ *  ESTIMATED, not the data, so there's nothing to animate on the table. */
+function isModelSpecStep(text: string): boolean {
+  const t = (text || "").toLowerCase();
+  return /(fixed[- ]?effect|clustered?\s+(?:standard error|by|se\b)|standard errors?\s+(?:are\s+)?clustered|robust standard error|control variable|controll?ing for|controls?\s+(?:are|for|added|includ)|(?:survey.?)?year\s+(?:indicator|control|dummy|dummies|fixed)|year[- ]?fixed|interaction term|random effect|weighted (?:by|using)|survey weight)/.test(t);
+}
+
 /** Parse EVERY operation the paper's funnel step mentions — a step like "remove incomplete records
  *  AND standardize income" is two operations, so we show both (each animatable), not just one.
  *  Selection/inclusion steps ("keep women aged 18+…") are row FILTERS, never standardization. */
@@ -1879,12 +1887,20 @@ function AnimatedCell({
   );
 }
 
+const PP_OP_SET = new Set<PreprocessOp>([
+  "impute_mean", "impute_median", "standardize", "minmax", "drop_missing_rows", "filter_rows", "encode",
+]);
+
 function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
   const fetched = exp.fetch_report.fetched;
+  const text = `${node.title}. ${node.detail ?? ""}`;
+  // PRIMARY: the LLM's structured classification on the node. FALLBACK: parse the wording.
+  const llmOp = node.op && PP_OP_SET.has(node.op as PreprocessOp) ? (node.op as PreprocessOp) : undefined;
+  const specStep = node.op === "model_spec" || (!node.op && isModelSpecStep(text));
+  const inferred = useMemo(() => inferOpsRich(text), [text]);
+  const paperOps = llmOp ? [llmOp] : inferred.ops;
+  const filter = (node.filter as RowFilter | undefined) ?? inferred.filter;
   const [dsId, setDsId] = useState(fetched[0]?.dataset_id ?? "");
-  // the PAPER's exact funnel step(s), parsed from this node's title + detail — may be several
-  const inferred = useMemo(() => inferOpsRich(`${node.title}. ${node.detail ?? ""}`), [node.title, node.detail]);
-  const paperOps = inferred.ops;
   // extra steps the user chooses to apply IN ADDITION to the paper's
   const [extra, setExtra] = useState<PreprocessOp[]>([]);
   const allOps = useMemo(() => [...paperOps, ...extra], [paperOps, extra]);
@@ -1901,8 +1917,8 @@ function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
     setError(null);
     setActive(false);
     const req =
-      op === "filter_rows" && inferred.filter
-        ? Api.preprocessPreviewFilter(dsId, inferred.filter, 8)
+      op === "filter_rows" && filter
+        ? Api.preprocessPreviewFilter(dsId, filter, 8)
         : Api.preprocessPreview(dsId, op === "filter_rows" ? "drop_missing_rows" : op, op === "drop_missing_rows" ? 8 : 6);
     req
       .then((p) => alive && setPv(p))
@@ -1913,6 +1929,18 @@ function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dsId, op]);
+
+  if (specStep) {
+    return (
+      <div className="mt-3 rounded-lg border border-line bg-bg p-3 text-sm text-ink">
+        <b className="text-forest">Model-specification step — nothing to transform.</b> This describes{" "}
+        <i>how the model is estimated</i> (e.g. year fixed effects, standard errors clustered by
+        state), not a change applied to the data itself. There&apos;s no table to animate — it takes
+        effect when the model runs, and it mainly affects the confidence intervals / significance, not
+        the data values.
+      </div>
+    );
+  }
 
   if (fetched.length === 0) {
     return (

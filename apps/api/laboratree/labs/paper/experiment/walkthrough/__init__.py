@@ -138,25 +138,32 @@ def _node(i: int, kind: str, title: str, detail: str = "", **extra: Any) -> dict
     return {"id": f"n{i}", "kind": kind, "title": title, "detail": detail, "source": "paper", **extra}
 
 
-# Generic, model-agnostic preprocessing that is handled as a tweakable choice rather than a funnel
-# node (train/test split is kept — it's a distinct, always-shown pipeline step).
-_GENERIC_PP = (
-    "missing", "impute", "fill na", "fillna", "drop na", "dropna", "standardi", "normali", "rescal",
-    "scal", "min-max", "minmax", "z-score", "z score", "one-hot", "one hot", "onehot", "dummy",
-    "encode", "encoding", "label encod",
-)
+# Structured preprocessing operations the LLM classifies each funnel step into, so the UI renders the
+# RIGHT animation instead of guessing from wording. "model_spec" = an estimation choice (fixed
+# effects, clustered SEs, controls) that changes how the model is fit, not the data.
+_PP_OPS = {
+    "drop_missing_rows", "impute_mean", "impute_median", "standardize", "minmax", "encode",
+    "filter_rows", "model_spec", "split", "none",
+}
+_PP_CMPS = {"lt", "le", "gt", "ge", "eq", "ne"}
 
 
-def _is_generic_preprocess(pp: str) -> bool:
-    """Skip ONLY bare, boilerplate steps (e.g. 'Standardize the features', 'Handle missing values')
-    that are offered as model choices instead. Any DESCRIBED, paper-specific step — even one that
-    mentions standardizing/imputing among its specifics — stays in the funnel."""
-    low = str(pp).strip().lower()
-    if "split" in low:                        # train/test split is a real, distinct funnel step
-        return False
-    if len(low.split()) > 4:                  # a described step is paper-specific → keep it
-        return False
-    return any(g in low for g in _GENERIC_PP)
+def _apply_preprocess_op(node: dict[str, Any], item: dict[str, Any]) -> None:
+    """Attach the LLM's structured op (+ filter) to a preprocess node, validated. The frontend trusts
+    node['op'] and only falls back to text-parsing when it's absent."""
+    op = str(item.get("op", "")).strip().lower()
+    if op in _PP_OPS and op != "none":
+        node["op"] = op
+    filt = item.get("filter")
+    if op == "filter_rows" and isinstance(filt, dict) and str(filt.get("cmp", "")).lower() in _PP_CMPS:
+        try:
+            node["filter"] = {
+                "column": str(filt.get("column", "")).strip(),
+                "cmp": str(filt["cmp"]).lower(),
+                "value": float(filt.get("value")),
+            }
+        except (TypeError, ValueError):
+            pass
 
 
 def default_walkthrough(card: dict[str, Any]) -> list[dict[str, Any]]:
@@ -168,12 +175,9 @@ def default_walkthrough(card: dict[str, Any]) -> list[dict[str, Any]]:
     steps.append(_node(i, "data", "Load data", ", ".join(sources) or "dataset(s) from the paper"))
     i += 1
 
-    # Only PAPER-SPECIFIC preprocessing becomes a funnel node. Generic steps (impute missing values,
-    # standardize/normalize/scale, encode) are offered as model-level choices (hyperparameter tweaks),
-    # not forced nodes — so the funnel shows what's distinctive about THIS paper's pipeline.
+    # Every preprocessing step the paper describes becomes a funnel node — the card/LLM already only
+    # lists steps the paper actually performed, and each node's operation is classified downstream.
     for pp in card.get("preprocessing") or []:
-        if _is_generic_preprocess(pp):
-            continue
         steps.append(_node(i, "preprocess", pp))
         i += 1
 
@@ -233,8 +237,6 @@ def _normalize_pipeline(steps: list[dict[str, Any]], card: dict[str, Any]) -> li
     collapsed: list[dict[str, Any]] = []
     seen_result = seen_inference = False
     for s in steps:
-        if s.get("kind") == "preprocess" and _is_generic_preprocess(s.get("title", "")):
-            continue                          # generic prep is a model choice, not a funnel node
         if s.get("kind") == "result":
             if seen_result:
                 continue
@@ -263,11 +265,20 @@ def build_walkthrough(card: dict[str, Any], complete_fn: CompleteFn | None = Non
         return _normalize_pipeline(base, card)
 
     system = (
-        "You reconstruct a research paper's pipeline as ordered steps. Return STRICT JSON: an array "
-        "of {kind, title, detail} where kind in [data, preprocess, eda, model, result, inference]. "
-        "Keep it faithful and concise. Each detail must be plain everyday language that also says WHY "
-        "the step is done (one short sentence of what + one of why), so a reader with no background "
-        "can follow the whole pipeline."
+        "You reconstruct a research paper's pipeline as ordered steps. Return STRICT JSON: an array of "
+        "{kind, title, detail, op?, filter?} where kind in [data, preprocess, eda, model, result, "
+        "inference]. Keep it faithful and concise. Each detail must be plain everyday language that "
+        "also says WHY the step is done (one sentence of what + one of why). "
+        "For kind='preprocess', ALSO classify the operation as 'op', EXACTLY one of: "
+        "drop_missing_rows | impute_mean | impute_median | standardize | minmax | encode | "
+        "filter_rows | model_spec | split | none. "
+        "Use 'model_spec' for ESTIMATION choices that do NOT change the data values (year/entity fixed "
+        "effects, clustered or robust standard errors, control variables, survey weighting, interaction "
+        "terms). Use 'filter_rows' when rows are KEPT or EXCLUDED by a rule (age cutoffs, marital "
+        "status, inclusion criteria); for it add filter:{column, cmp, value} where cmp is one of "
+        "lt,le,gt,ge,eq,ne and describes the condition for rows to REMOVE (e.g. 'keep age >= 18' → "
+        "{column:'age', cmp:'lt', value:18}). Use 'split' for a train/test split. If a step does "
+        "several things, pick the PRIMARY op."
     )
     try:
         raw = complete_fn(system, json.dumps(card)[:12000])
@@ -287,6 +298,8 @@ def build_walkthrough(card: dict[str, Any], complete_fn: CompleteFn | None = Non
                 node["available"] = cid is not None
                 node["suggested_component"] = cid or standin_for(node["title"])
                 node["params"] = {"target": _name(card.get("target_variable"))} | extra
+            elif kind == "preprocess":
+                _apply_preprocess_op(node, item)
             steps.append(node)
         return _normalize_pipeline(steps or base, card)
     except Exception:
