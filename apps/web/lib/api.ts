@@ -728,7 +728,8 @@ export const Api = {
     ),
 
   llmSummary: (projectId: string) => apiGet<LlmSummary>(`/api/projects/${projectId}/llm/summary`),
-  llmCalls: (projectId: string) => apiGet<LlmCall[]>(`/api/projects/${projectId}/llm/calls`),
+  llmCalls: (projectId: string, limit = 25) =>
+    apiGet<LlmCall[]>(`/api/projects/${projectId}/llm/calls?limit=${limit}`),
 
   runIdeation: (projectId: string, body: { goal: string; n?: number; evolve_n?: number }) =>
     apiPost<IdeationSession>(`/api/projects/${projectId}/ideation`, body),

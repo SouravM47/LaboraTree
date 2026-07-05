@@ -3,15 +3,29 @@
 import { useEffect, useState } from "react";
 import { Api, type LlmCall, type LlmSummary } from "@/lib/api";
 
+const LIMITS = [25, 50, 100, 500];
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z"); // stored UTC
+  if (Number.isNaN(d.getTime())) return "—";
+  const secs = Math.round((Date.now() - d.getTime()) / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return d.toLocaleString();
+}
+
 export default function LlmActivity({ projectId }: { projectId: string }) {
   const [summary, setSummary] = useState<LlmSummary | null>(null);
   const [calls, setCalls] = useState<LlmCall[]>([]);
+  const [limit, setLimit] = useState(25);
 
   function load() {
     Api.llmSummary(projectId).then(setSummary).catch(() => setSummary(null));
-    Api.llmCalls(projectId).then(setCalls).catch(() => setCalls([]));
+    Api.llmCalls(projectId, limit).then(setCalls).catch(() => setCalls([]));
   }
-  useEffect(load, [projectId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [projectId, limit]);
 
   return (
     <div className="space-y-6">
@@ -58,16 +72,39 @@ export default function LlmActivity({ projectId }: { projectId: string }) {
       )}
 
       <div className="rounded-2xl border border-line bg-white p-5">
-        <h3 className="font-display text-lg text-forest">Recent calls</h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-display text-lg text-forest">
+            Recent calls{" "}
+            <span className="text-sm font-normal text-muted">
+              (showing {calls.length}
+              {summary && summary.totals.calls > calls.length ? ` of ${summary.totals.calls}` : ""})
+            </span>
+          </h3>
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            Show
+            <select
+              className="rounded-lg border border-line px-2 py-1 text-forest"
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+            >
+              {LIMITS.map((n) => (
+                <option key={n} value={n}>
+                  {n === 500 ? "max" : `last ${n}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         {calls.length === 0 ? (
           <p className="mt-2 text-sm text-muted">
             No LLM calls yet. Generate a Paper Card, run the Co-Scientist, or use a Collection tool.
           </p>
         ) : (
-          <div className="mt-3 overflow-x-auto">
+          <div className="mt-3 max-h-[28rem] overflow-auto">
             <table className="w-full text-left text-sm">
-              <thead className="text-muted">
+              <thead className="sticky top-0 bg-white text-muted">
                 <tr className="border-b border-line">
+                  <th className="py-2 pr-4">When</th>
                   <th className="py-2 pr-4">Lab · op</th><th className="py-2 pr-4">Model</th>
                   <th className="py-2 pr-4">Tokens</th><th className="py-2 pr-4">Latency</th>
                   <th className="py-2">Status</th>
@@ -76,6 +113,9 @@ export default function LlmActivity({ projectId }: { projectId: string }) {
               <tbody>
                 {calls.map((c) => (
                   <tr key={c.id} className="border-b border-line/60">
+                    <td className="whitespace-nowrap py-2 pr-4 text-muted" title={new Date(c.created_at).toLocaleString()}>
+                      {fmtTime(c.created_at)}
+                    </td>
                     <td className="py-2 pr-4 text-forest">{c.lab} · {c.operation}</td>
                     <td className="py-2 pr-4 text-muted">{c.model}</td>
                     <td className="py-2 pr-4">{c.total_tokens}</td>
