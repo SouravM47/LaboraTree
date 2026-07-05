@@ -184,20 +184,27 @@ async def grounded_ideation(
             detail="evidence search is disabled — enable OpenAlex or set a web-search key in .env",
         )
 
-    def _run() -> tuple[dict[str, Any], dict[str, Any]]:
+    def _hunt() -> dict[str, Any]:
         with use_llm_context("ideation", "grounded", project_id=project_id, org_id=principal.org_id):
-            ev = gather_evidence(
+            return gather_evidence(
                 body.goal, search_fn=research_search, complete_fn=ideation_llm.default_complete,
                 max_sources=8,
             )
+
+    # reuse the cached evidence brief (same key as the evidence endpoint) so re-running the
+    # Co-Scientist on a goal doesn't re-pay for the search + synthesis every time
+    ev_key = cache_key("evidence", project_id, body.goal.strip().lower(), 8)
+    ev = await cached_json(ev_key, settings.ideation_cache_ttl_s, lambda: asyncio.to_thread(_hunt))
+
+    def _tournament() -> dict[str, Any]:
+        with use_llm_context("ideation", "grounded", project_id=project_id, org_id=principal.org_id):
             context = _evidence_context(ev["brief"])
-            result = run_ideation(
+            return run_ideation(
                 body.goal, ideation_llm.default_complete,
                 n=body.n, evolve_n=body.evolve_n, context=context,
             )
-            return ev, result
 
-    ev, result = await asyncio.to_thread(_run)
+    result = await asyncio.to_thread(_tournament)
     record = IdeationSession(
         org_id=principal.org_id, project_id=project_id, goal=body.goal,
         status=IdeationStatus.COMPLETE, hypotheses=result["hypotheses"],
@@ -384,12 +391,8 @@ async def build_dataset(
     import asyncio
 
     await _require_project(session, principal, project_id)
-    if not any(c.get("direct_download") for c in body.candidates):
-        raise HTTPException(
-            status_code=422,
-            detail="none of the candidates are directly downloadable — open the portal links and "
-            "upload the data, or run the data hunt again",
-        )
+    if not body.candidates:
+        raise HTTPException(status_code=422, detail="no candidate datasets to build from")
 
     result = await asyncio.to_thread(build_master, body.candidates, _download_bytes)
     master = result.get("master")

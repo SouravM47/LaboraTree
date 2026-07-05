@@ -54,7 +54,9 @@ def build_master(candidates: list[dict], fetch_fn: FetchFn) -> dict:
 
     tables: list[dict] = []
     frames: list[tuple[dict, "pd.DataFrame"]] = []
-    picked = [c for c in candidates if c.get("direct_download")][:MAX_DOWNLOADS]
+    # try direct-download candidates first, then the rest — a portal URL often still serves/redirects
+    # to a CSV, and _parse_csv rejects anything that isn't tabular, so trying is safe.
+    picked = sorted(candidates, key=lambda c: not c.get("direct_download"))[:MAX_DOWNLOADS]
     for c in picked:
         url = c.get("url", "")
         raw = fetch_fn(url) if url else None

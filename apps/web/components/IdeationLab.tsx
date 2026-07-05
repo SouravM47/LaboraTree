@@ -518,7 +518,7 @@ function DataHunt({ projectId, result }: { projectId: string; result: EvidenceRe
             </button>
           </div>
 
-          {data.candidates.some((c) => c.direct_download) && (
+          {data.candidates.length > 0 && (
             <BuildAndExperiment
               projectId={projectId}
               candidates={data.candidates}

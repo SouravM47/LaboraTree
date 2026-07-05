@@ -311,7 +311,8 @@ def test_build_master_concatenates_matching_schemas():
     assert len(out["master"]) == 4 and list(out["master"].columns) == ["age", "income", "y"]
     statuses = {t["url"]: t["status"] for t in out["tables"]}
     assert statuses["https://x/bad.csv"] == "not_tabular"
-    assert "https://x/portal" not in statuses                      # non-direct never downloaded
+    # non-direct candidates ARE now attempted (portals often still serve CSV); this one has no bytes
+    assert statuses["https://x/portal"] == "download_failed"
 
 
 def test_build_master_handles_nothing_usable():

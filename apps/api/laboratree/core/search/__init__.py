@@ -254,20 +254,18 @@ def research_available() -> bool:
     return settings.openalex_enabled or settings.semantic_scholar_enabled or search_available()
 
 
-def open_access_pdf(url: str) -> str | None:
-    """Given a paper URL/DOI, return a directly-downloadable OPEN-ACCESS PDF link (via OpenAlex's OA
-    locations) — or None if the paper is paywalled / has no free full text. Keyless."""
-    import httpx
-
+def _extract_doi(url: str) -> str | None:
     low = (url or "").lower()
     if "doi.org/" in low:
-        ident = "doi:" + url.split("doi.org/", 1)[1].strip("/")
-    elif "openalex.org/" in low:
-        ident = url.rstrip("/").split("/")[-1]          # a W-id
-    elif low.startswith("10."):
-        ident = "doi:" + url                            # bare DOI
-    else:
-        return None
+        return url.split("doi.org/", 1)[1].strip("/")
+    if low.startswith("10."):
+        return url
+    return None
+
+
+def _openalex_oa_pdf(ident: str) -> str | None:
+    import httpx
+
     try:
         resp = httpx.get(
             f"https://api.openalex.org/works/{ident}",
@@ -279,9 +277,54 @@ def open_access_pdf(url: str) -> str | None:
         w = resp.json() or {}
         loc = w.get("best_oa_location") or {}
         return loc.get("pdf_url") or (w.get("open_access") or {}).get("oa_url")
-    except Exception as exc:
-        log.info("open_access_pdf failed for %r: %s", url, exc)
+    except Exception:
         return None
+
+
+def _unpaywall_oa_pdf(doi: str) -> str | None:
+    import httpx
+
+    try:
+        resp = httpx.get(
+            f"https://api.unpaywall.org/v2/{doi}",
+            params={"email": settings.openalex_mailto or "hello@laboratree.dev"},
+            headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+        loc = (resp.json() or {}).get("best_oa_location") or {}
+        return loc.get("url_for_pdf") or loc.get("url")
+    except Exception:
+        return None
+
+
+def open_access_pdf(url: str) -> str | None:
+    """Resolve a paper URL/DOI to a directly-downloadable OPEN-ACCESS PDF. Tries, in order: the URL
+    itself if it's already a PDF/arXiv, OpenAlex's OA locations, then Unpaywall (broader coverage).
+    Returns None only when the paper is genuinely paywalled with no free full text."""
+    low = (url or "").lower().split("?")[0]
+    # 0) the source link is already full text
+    if low.endswith(".pdf"):
+        return url
+    if "arxiv.org/abs/" in low:
+        return url.replace("/abs/", "/pdf/")            # arXiv abstract page → its PDF (redirects)
+    if "/pmc/articles/" in low or "ncbi.nlm.nih.gov/pmc" in low:
+        return url.rstrip("/") + "/pdf/"
+
+    ident = url.rstrip("/").split("/")[-1] if "openalex.org/" in low else None
+    doi = _extract_doi(url)
+    if not ident and doi:
+        ident = f"doi:{doi}"
+
+    if ident:
+        pdf = _openalex_oa_pdf(ident)
+        if pdf:
+            return pdf
+    if doi:  # OpenAlex missed → Unpaywall often still has an OA copy
+        pdf = _unpaywall_oa_pdf(doi)
+        if pdf:
+            return pdf
+    return None
 
 
 # Hosts that commonly serve a raw, directly-downloadable data file.
