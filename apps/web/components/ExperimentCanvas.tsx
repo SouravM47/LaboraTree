@@ -1000,7 +1000,7 @@ function NodeDetail({
       ) : node.kind === "eda" ? (
         <EdaPanel exp={exp} />
       ) : node.kind === "preprocess" ? (
-        isSplit(node.title) ? <TrainTestSplitPanel exp={exp} /> : <PreprocessPanel exp={exp} node={node} />
+        isSplit(node.title) ? <TrainTestSplitPanel exp={exp} /> : <PreprocessPanel key={node.id} exp={exp} node={node} />
       ) : node.kind === "result" || node.kind === "inference" ? (
         <ResultsComparison node={node} exp={exp} results={results} primary={primaryMetric} />
       ) : !isModel ? (
@@ -1789,6 +1789,26 @@ function inferOp(title: string): PreprocessOp {
   return "standardize";
 }
 
+/** Parse EVERY operation the paper's funnel step mentions — a step like "remove incomplete records
+ *  AND standardize income" is two operations, so we show both (each animatable), not just one. */
+function inferOpsRich(text: string): { ops: PreprocessOp[]; filter?: RowFilter } {
+  const t = (text || "").toLowerCase();
+  const ops: PreprocessOp[] = [];
+  const rich = inferOpRich(text);
+  if (rich.op === "filter_rows" && rich.filter) ops.push("filter_rows");
+  if (/(remov|drop|delet|discard|exclud|elimina)\w*[^.;]*(missing|null|incomplete|\bna\b|empty)/.test(t) ||
+      /(complete case|without missing|no missing|listwise)/.test(t))
+    ops.push("drop_missing_rows");
+  if (/(encod|one.?hot|label encod|categor\w+ (?:to|into) num|dummy|nominal)/.test(t))
+    ops.push("encode");
+  if (t.includes("median")) ops.push("impute_median");
+  else if (/(\bmean\b|imput|fill\w*[^.;]*missing|replac\w*[^.;]*missing)/.test(t)) ops.push("impute_mean");
+  if ((t.includes("min") && t.includes("max")) || /normali[sz]/.test(t)) ops.push("minmax");
+  if (/standardi[sz]|z-?score|constant .*price|deflat/.test(t)) ops.push("standardize");
+  const uniq = [...new Set(ops)];
+  return { ops: uniq.length ? uniq : [inferOp(text)], filter: rich.filter };
+}
+
 function AnimatedCell({
   before,
   after,
@@ -1829,9 +1849,13 @@ function AnimatedCell({
 function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
   const fetched = exp.fetch_report.fetched;
   const [dsId, setDsId] = useState(fetched[0]?.dataset_id ?? "");
-  // the PAPER's exact funnel step, parsed from this node's title + detail
-  const inferred = inferOpRich(`${node.title}. ${node.detail ?? ""}`);
-  const [op, setOp] = useState<PreprocessOp>(inferred.op);
+  // the PAPER's exact funnel step(s), parsed from this node's title + detail — may be several
+  const inferred = useMemo(() => inferOpsRich(`${node.title}. ${node.detail ?? ""}`), [node.title, node.detail]);
+  const paperOps = inferred.ops;
+  // extra steps the user chooses to apply IN ADDITION to the paper's
+  const [extra, setExtra] = useState<PreprocessOp[]>([]);
+  const allOps = useMemo(() => [...paperOps, ...extra], [paperOps, extra]);
+  const [op, setOp] = useState<PreprocessOp>(paperOps[0]);
   const [pv, setPv] = useState<PreprocessPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1893,17 +1917,6 @@ function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
             ))}
           </select>
         )}
-        <select
-          className="rounded-lg border border-line px-2 py-1 text-xs"
-          value={op}
-          onChange={(e) => setOp(e.target.value as PreprocessOp)}
-        >
-          {(Object.keys(PREPROC_LABELS) as PreprocessOp[]).map((k) => (
-            <option key={k} value={k}>
-              {PREPROC_LABELS[k]}
-            </option>
-          ))}
-        </select>
         <button
           onClick={() => setActive((a) => !a)}
           disabled={busy || !pv}
@@ -1911,6 +1924,60 @@ function PreprocessPanel({ exp, node }: { exp: Experiment; node: WalkNode }) {
         >
           {active ? "◀ Reset" : "Transform ▶"}
         </button>
+      </div>
+
+      {/* the paper's step(s) for this node — click one to animate it; add more only if you want to */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {allOps.map((k, idx) => {
+          const isPaper = idx < paperOps.length;
+          return (
+            <button
+              key={`${k}-${idx}`}
+              onClick={() => setOp(k)}
+              className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                op === k ? "bg-forest text-white" : "border border-line text-forest hover:bg-bg"
+              }`}
+            >
+              {PREPROC_LABELS[k]}
+              <span className={`ml-1 text-[9px] ${op === k ? "text-white/70" : "text-muted"}`}>
+                {isPaper ? "· paper" : "· added"}
+              </span>
+              {!isPaper && (
+                <span
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const j = idx - paperOps.length;
+                    setExtra((x) => x.filter((_, i) => i !== j));
+                    if (op === k) setOp(paperOps[0]);
+                  }}
+                  className={`ml-1 cursor-pointer ${op === k ? "text-white/80" : "text-muted"} hover:text-red-500`}
+                >
+                  ×
+                </span>
+              )}
+            </button>
+          );
+        })}
+        <select
+          className="rounded-lg border border-dashed border-line px-2 py-1 text-xs text-muted"
+          value=""
+          onChange={(e) => {
+            const k = e.target.value as PreprocessOp;
+            if (k && !allOps.includes(k)) {
+              setExtra((x) => [...x, k]);
+              setOp(k);
+            }
+          }}
+        >
+          <option value="">➕ Add step…</option>
+          {(Object.keys(PREPROC_LABELS) as PreprocessOp[])
+            .filter((k) => !allOps.includes(k))
+            .map((k) => (
+              <option key={k} value={k}>
+                {PREPROC_LABELS[k]}
+              </option>
+            ))}
+        </select>
       </div>
 
       <div className="rounded-lg bg-leaf/10 p-2.5 text-xs text-ink">
